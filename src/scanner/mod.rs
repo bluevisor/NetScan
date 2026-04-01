@@ -7,3 +7,7 @@ pub mod netbios;
 pub mod banner;
 pub mod os_fp;
 pub mod tls_fp;
+pub mod upnp;
+pub mod dns;
+pub mod snmp;
+pub mod wsd;
