@@ -103,7 +103,7 @@ impl std::fmt::Display for DeviceType {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
-pub enum DiscoveryMethod { Arp, TcpConnect, Mdns, Ssdp, NetBios, Dhcp, Sniff, Banner, OsFp }
+pub enum DiscoveryMethod { Arp, TcpConnect, Mdns, Ssdp, NetBios, Dhcp, Sniff, Banner, OsFp, Dns, Snmp, Wsd, Upnp, Smb, LldpCdp }
 
 impl std::fmt::Display for DiscoveryMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

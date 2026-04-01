@@ -77,8 +77,8 @@ pub fn render(f: &mut Frame, scan_state: &ScanState, ui: &UiState) {
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(58),
-            Constraint::Percentage(42),
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
         ])
         .split(main_chunks[1]);
 

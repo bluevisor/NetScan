@@ -17,7 +17,11 @@ pub fn classify_apple_device(
     let mut info = AppleDeviceInfo::default();
 
     // 1. Model string from mDNS TXT records
-    if let Some(model) = model_id.or_else(|| txt_records.get("model").map(|s| s.as_str())) {
+    // Check "model", "am" (used by _raop._tcp), and "md" TXT keys
+    if let Some(model) = model_id
+        .or_else(|| txt_records.get("model").map(|s| s.as_str()))
+        .or_else(|| txt_records.get("am").map(|s| s.as_str()))
+    {
         if let Some(name) = lookup_model(model) {
             info.marketing_name = Some(name.to_string());
         }

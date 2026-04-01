@@ -9,7 +9,8 @@ use crate::identify::{apple, device_type, oui};
 use crate::model::*;
 use crate::net::interface::InterfaceInfo;
 use crate::net::raw::PrivilegeLevel;
-use crate::scanner::{arp, banner, mdns, netbios, os_fp, ports, ssdp};
+use crate::scanner::{arp, banner, dns, mdns, netbios, os_fp, ports, smb, snmp, ssdp, upnp, wsd};
+use crate::sniffer::parser::{DhcpFingerprint, LldpCdpInfo};
 
 pub struct ScanState {
     pub devices: HashMap<IpAddr, Device>,
@@ -81,16 +82,24 @@ pub async fn run_scan(
         s.phase = ScanPhase::Phase1Instant;
     }
 
-    // Start sniffer in background if root
+    // Start sniffer in background if root — use full variant with LLDP/CDP + DHCP channels
     let sniffer_shutdown = shutdown.clone();
     let sniffer_state = state.clone();
     if priv_level == PrivilegeLevel::Root {
         let iface_name = iface.name.clone();
         let (sniff_tx, mut sniff_rx) = mpsc::channel::<SnifferEvent>(256);
+        let (lldp_cdp_tx, mut lldp_cdp_rx) = mpsc::channel::<LldpCdpInfo>(64);
+        let (dhcp_fp_tx, mut dhcp_fp_rx) = mpsc::channel::<DhcpFingerprint>(64);
 
-        // Sniffer capture thread (blocking)
+        // Sniffer capture thread (blocking) — full variant
         std::thread::spawn(move || {
-            crate::sniffer::capture::start_capture(&iface_name, sniff_tx, sniffer_shutdown);
+            crate::sniffer::capture::start_capture_full(
+                &iface_name,
+                sniff_tx,
+                lldp_cdp_tx,
+                dhcp_fp_tx,
+                sniffer_shutdown,
+            );
         });
 
         // Sniffer event consumer
@@ -99,6 +108,99 @@ pub async fn run_scan(
             while let Some(event) = sniff_rx.recv().await {
                 let mut s = sniff_state.lock().await;
                 s.add_sniffer_event(event);
+            }
+        });
+
+        // LLDP/CDP consumer — update device vendor/model/hostname
+        let lldp_state = sniffer_state.clone();
+        tokio::spawn(async move {
+            while let Some(info) = lldp_cdp_rx.recv().await {
+                let mut s = lldp_state.lock().await;
+                // Try to find the device by management IP, otherwise by MAC
+                let ip = if let Some(mgmt_ip) = info.management_ip {
+                    Some(mgmt_ip)
+                } else if let Some(mac) = info.source_mac {
+                    s.devices.iter().find(|(_, d)| d.mac == Some(mac)).map(|(ip, _)| *ip)
+                } else {
+                    None
+                };
+                if let Some(ip) = ip {
+                    let dev = s.get_or_create_device(ip);
+                    if let Some(ref name) = info.system_name {
+                        if dev.hostname.is_none() {
+                            dev.hostname = Some(name.clone());
+                        }
+                    }
+                    if let Some(ref desc) = info.system_description {
+                        if dev.os.is_none() {
+                            dev.os = Some(desc.clone());
+                        }
+                    }
+                    if let Some(ref platform) = info.platform {
+                        if dev.vendor.is_none() {
+                            dev.vendor = Some(platform.clone());
+                        }
+                    }
+                    dev.add_source(DiscoveryMethod::LldpCdp);
+                }
+            }
+        });
+
+        // DHCP fingerprint consumer — update device OS hint
+        let dhcp_state = sniffer_state.clone();
+        tokio::spawn(async move {
+            while let Some(fp) = dhcp_fp_rx.recv().await {
+                let mut s = dhcp_state.lock().await;
+                let ip = IpAddr::V4(fp.source_ip);
+                let dev = s.get_or_create_device(ip);
+                if let Some(ref hostname) = fp.hostname {
+                    if dev.hostname.is_none() {
+                        dev.hostname = Some(hostname.clone());
+                    }
+                }
+                let os_hint = crate::sniffer::parser::match_dhcp_fingerprint(
+                    &fp.option55,
+                    fp.vendor_class.as_deref(),
+                );
+                if let Some(os) = os_hint {
+                    if dev.os.is_none() {
+                        dev.os = Some(os);
+                    }
+                }
+                dev.add_source(DiscoveryMethod::Dhcp);
+            }
+        });
+    }
+
+    // Start continuous mDNS listener
+    let mdns_continuous_shutdown = shutdown.clone();
+    let mdns_cont_state = state.clone();
+    {
+        let (mdns_cont_tx, mut mdns_cont_rx) = mpsc::channel::<mdns::MdnsResult>(256);
+        tokio::spawn(async move {
+            mdns::mdns_listen_continuous(mdns_cont_tx, mdns_continuous_shutdown).await;
+        });
+
+        let cont_state = mdns_cont_state.clone();
+        tokio::spawn(async move {
+            while let Some(result) = mdns_cont_rx.recv().await {
+                let mut s = cont_state.lock().await;
+                if let Some(ip) = result.ip {
+                    let dev = s.get_or_create_device(ip);
+                    if let Some(ref hostname) = result.hostname {
+                        if dev.hostname.is_none() {
+                            dev.hostname = Some(hostname.clone());
+                        }
+                    }
+                    if !result.service_type.is_empty() {
+                        dev.mdns_services.push(MdnsService {
+                            service_type: result.service_type.clone(),
+                            name: result.instance_name.clone(),
+                            txt_records: result.txt_records.clone(),
+                        });
+                    }
+                    dev.add_source(DiscoveryMethod::Mdns);
+                }
             }
         });
     }
@@ -197,7 +299,7 @@ pub async fn run_scan(
         }
     });
 
-    // mDNS discovery
+    // mDNS discovery (one-shot query)
     let (mdns_tx, mut mdns_rx) = mpsc::channel::<mdns::MdnsResult>(256);
     tokio::spawn(async move {
         mdns::mdns_discover(mdns_tx).await;
@@ -260,13 +362,15 @@ pub async fn run_scan(
         }
     });
 
-    // SSDP discovery
+    // SSDP discovery — collect location URLs for UPnP fetch
     let (ssdp_tx, mut ssdp_rx) = mpsc::channel::<ssdp::SsdpResult>(256);
     tokio::spawn(async move {
         ssdp::ssdp_discover(ssdp_tx).await;
     });
 
     let ssdp_state = state.clone();
+    let ssdp_locations: Arc<Mutex<Vec<(IpAddr, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let ssdp_locs_clone = ssdp_locations.clone();
     let ssdp_collector = tokio::spawn(async move {
         while let Some(result) = ssdp_rx.recv().await {
             let mut s = ssdp_state.lock().await;
@@ -276,6 +380,11 @@ pub async fn run_scan(
                 if dev.os.is_none() {
                     dev.os = Some(server.clone());
                 }
+            }
+            // Collect location URLs for UPnP fetch
+            if let Some(ref location) = result.location {
+                let mut locs = ssdp_locs_clone.lock().await;
+                locs.push((result.ip, location.clone()));
             }
         }
     });
@@ -299,8 +408,126 @@ pub async fn run_scan(
         }
     });
 
+    // DNS PTR lookup — use first IP in subnet as DNS server (likely the gateway)
+    let (dns_tx, mut dns_rx) = mpsc::channel::<dns::DnsResult>(256);
+    let dns_targets = discovered_ips.clone();
+    let dns_server = targets.first().copied().unwrap_or(Ipv4Addr::new(192, 168, 1, 1));
+    tokio::spawn(async move {
+        dns::reverse_dns_lookup(&dns_targets, dns_server, dns_tx).await;
+    });
+
+    let dns_state = state.clone();
+    let dns_collector = tokio::spawn(async move {
+        while let Some(result) = dns_rx.recv().await {
+            let mut s = dns_state.lock().await;
+            let dev = s.get_or_create_device(result.ip);
+            if dev.hostname.is_none() {
+                dev.hostname = Some(result.hostname);
+            }
+            dev.add_source(DiscoveryMethod::Dns);
+        }
+    });
+
+    // SNMP queries
+    let (snmp_tx, mut snmp_rx) = mpsc::channel::<snmp::SnmpResult>(256);
+    let snmp_targets = discovered_ips.clone();
+    tokio::spawn(async move {
+        snmp::snmp_query(&snmp_targets, snmp_tx).await;
+    });
+
+    let snmp_state = state.clone();
+    let snmp_collector = tokio::spawn(async move {
+        while let Some(result) = snmp_rx.recv().await {
+            let mut s = snmp_state.lock().await;
+            let dev = s.get_or_create_device(result.ip);
+            if let Some(ref desc) = result.sys_descr {
+                if dev.os.is_none() {
+                    dev.os = Some(desc.clone());
+                }
+            }
+            if let Some(ref name) = result.sys_name {
+                if dev.hostname.is_none() {
+                    dev.hostname = Some(name.clone());
+                }
+            }
+            dev.add_source(DiscoveryMethod::Snmp);
+        }
+    });
+
+    // WSD discovery
+    let (wsd_tx, mut wsd_rx) = mpsc::channel::<wsd::WsdResult>(256);
+    tokio::spawn(async move {
+        wsd::wsd_discover(wsd_tx).await;
+    });
+
+    let wsd_state = state.clone();
+    let wsd_collector = tokio::spawn(async move {
+        while let Some(result) = wsd_rx.recv().await {
+            let mut s = wsd_state.lock().await;
+            let dev = s.get_or_create_device(result.ip);
+            if let Some(ref dt) = result.device_type {
+                if dev.device_type == DeviceType::Unknown {
+                    // Try to map WSD device type string
+                    let dtl = dt.to_lowercase();
+                    if dtl.contains("printer") {
+                        dev.device_type = DeviceType::Printer;
+                    } else if dtl.contains("computer") {
+                        dev.device_type = DeviceType::Computer;
+                    }
+                }
+            }
+            if let Some(ref name) = result.friendly_name {
+                if dev.hostname.is_none() {
+                    dev.hostname = Some(name.clone());
+                }
+            }
+            dev.add_source(DiscoveryMethod::Wsd);
+        }
+    });
+
     // Wait for phase 2 to complete
-    let _ = tokio::join!(port_collector, mdns_collector, ssdp_collector, nb_collector);
+    let _ = tokio::join!(
+        port_collector,
+        mdns_collector,
+        ssdp_collector,
+        nb_collector,
+        dns_collector,
+        snmp_collector,
+        wsd_collector,
+    );
+
+    // UPnP XML fetch using collected SSDP location URLs
+    {
+        let locations = ssdp_locations.lock().await.clone();
+        if !locations.is_empty() {
+            let (upnp_tx, mut upnp_rx) = mpsc::channel::<upnp::UpnpDeviceInfo>(256);
+            tokio::spawn(async move {
+                upnp::upnp_fetch(&locations, upnp_tx).await;
+            });
+
+            let upnp_state = state.clone();
+            while let Some(info) = upnp_rx.recv().await {
+                let mut s = upnp_state.lock().await;
+                let dev = s.get_or_create_device(info.ip);
+                if let Some(ref mfr) = info.manufacturer {
+                    if dev.vendor.is_none() {
+                        dev.vendor = Some(mfr.clone());
+                    }
+                }
+                if let Some(ref model) = info.model_name {
+                    if dev.model.is_none() {
+                        dev.model = Some(model.clone());
+                    }
+                }
+                if let Some(ref name) = info.friendly_name {
+                    if dev.hostname.is_none() {
+                        dev.hostname = Some(name.clone());
+                    }
+                }
+                dev.add_source(DiscoveryMethod::Upnp);
+            }
+        }
+    }
 
     // Classify all devices
     {
@@ -380,6 +607,40 @@ pub async fn run_scan(
         });
     }
 
+    // SMB enumeration on hosts with port 445 open
+    let smb_hosts: Vec<IpAddr> = hosts_with_ports.iter()
+        .filter(|(_, ports)| ports.contains(&445))
+        .map(|(ip, _)| *ip)
+        .collect();
+
+    let (smb_tx, mut smb_rx) = mpsc::channel::<smb::SmbResult>(256);
+    for &ip in &smb_hosts {
+        let tx = smb_tx.clone();
+        tokio::spawn(async move {
+            smb::smb_enumerate(ip, tx).await;
+        });
+    }
+    drop(smb_tx);
+
+    let smb_state = state.clone();
+    let smb_collector = tokio::spawn(async move {
+        while let Some(result) = smb_rx.recv().await {
+            let mut s = smb_state.lock().await;
+            let dev = s.get_or_create_device(result.ip);
+            if let Some(ref os_ver) = result.os_version {
+                if dev.os.is_none() {
+                    dev.os = Some(os_ver.clone());
+                }
+            }
+            if let Some(ref name) = result.computer_name {
+                if dev.hostname.is_none() {
+                    dev.hostname = Some(name.clone());
+                }
+            }
+            dev.add_source(DiscoveryMethod::Smb);
+        }
+    });
+
     // Top 1000 port scan on discovered hosts
     let top1000 = ports::top_1000_ports();
     let (port2_tx, mut port2_rx) = mpsc::channel::<ports::PortScanResult>(512);
@@ -404,7 +665,29 @@ pub async fn run_scan(
         }
     });
 
-    let _ = tokio::join!(banner_collector, port2_collector);
+    let _ = tokio::join!(banner_collector, smb_collector, port2_collector);
+
+    // Apply SSH banner classification to devices with SSH banners
+    {
+        let mut s = state.lock().await;
+        let ips: Vec<IpAddr> = s.devices.keys().cloned().collect();
+        for ip in ips {
+            if let Some(dev) = s.devices.get_mut(&ip) {
+                device_type::apply_ssh_classification(dev);
+            }
+        }
+    }
+
+    // Re-classify devices with banner data now available
+    {
+        let mut s = state.lock().await;
+        let ips: Vec<IpAddr> = s.devices.keys().cloned().collect();
+        for ip in ips {
+            if let Some(dev) = s.devices.get_mut(&ip) {
+                device_type::classify_device(dev);
+            }
+        }
+    }
 
     // Mark complete
     {
