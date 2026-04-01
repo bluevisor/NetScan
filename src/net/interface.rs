@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 use ipnetwork::Ipv4Network;
-use pnet_datalink::{self, NetworkInterface};
+use pnet_datalink::{self};
 
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {

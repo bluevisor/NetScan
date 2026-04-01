@@ -56,7 +56,7 @@ fn guess_os_from_ttl(ttl: u8) -> String {
         "Linux/macOS/iOS (TTL~64)".to_string()
     } else if ttl <= 128 && ttl > 64 {
         "Windows (TTL~128)".to_string()
-    } else if ttl <= 255 && ttl > 128 {
+    } else if ttl > 128 {
         "Cisco/Solaris (TTL~255)".to_string()
     } else {
         format!("Unknown (TTL={})", ttl)

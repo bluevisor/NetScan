@@ -315,7 +315,7 @@ fn parse_dhcp_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> Option<Sni
         return None;
     }
 
-    let op = payload[0]; // 1=request, 2=reply
+    let _op = payload[0]; // 1=request, 2=reply
     let magic = &payload[236..240];
     if magic != [99, 130, 83, 99] {
         return None; // Not DHCP
