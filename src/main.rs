@@ -1,6 +1,8 @@
 mod model;
 mod net;
 mod identify;
+mod scanner;
+mod sniffer;
 
 fn main() {
     let priv_level = net::raw::detect_privilege();
