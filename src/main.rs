@@ -1,20 +1,66 @@
+mod app;
+mod export;
+mod identify;
 mod model;
 mod net;
-mod identify;
 mod scanner;
 mod sniffer;
+mod ui;
 
-fn main() {
-    let priv_level = net::raw::detect_privilege();
-    println!("Privilege: {}", priv_level);
+use clap::Parser;
+use std::path::PathBuf;
 
-    let iface = net::interface::pick_interface(None);
-    match iface {
-        Some(i) => println!("Interface: {} IP: {} MAC: {} Subnet: {}", i.name, i.ip, i.mac, i.network),
-        None => println!("No suitable interface found"),
+#[derive(Parser, Debug)]
+#[command(name = "netscan", about = "Network security scanner with TUI", version)]
+struct Cli {
+    /// Target network (CIDR) or IP. Defaults to local subnet.
+    target: Option<String>,
+
+    /// Network interface to use
+    #[arg(short, long)]
+    interface: Option<String>,
+
+    /// Disable passive sniffer
+    #[arg(long)]
+    no_sniff: bool,
+
+    /// Auto-export results to JSON file on exit
+    #[arg(long, value_name = "FILE")]
+    export: Option<PathBuf>,
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+
+    let privilege = net::raw::detect_privilege();
+
+    let iface = match net::interface::pick_interface(cli.interface.as_deref()) {
+        Some(i) => i,
+        None => {
+            eprintln!("No suitable network interface found.");
+            if let Some(ref name) = cli.interface {
+                eprintln!("Interface '{}' not found. Available:", name);
+            } else {
+                eprintln!("Available interfaces:");
+            }
+            for i in net::interface::list_interfaces() {
+                eprintln!("  {} ({})", i.name, i.ip);
+            }
+            std::process::exit(1);
+        }
+    };
+
+    let app = app::App::new(
+        iface,
+        privilege,
+        cli.target,
+        cli.export,
+        cli.no_sniff,
+    );
+
+    if let Err(e) = app.run().await {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
     }
-
-    let mac = pnet::util::MacAddr::new(0xAC, 0xBC, 0x32, 0x00, 0x00, 0x00);
-    println!("OUI {}: {:?}", mac, identify::oui::lookup_vendor(&mac));
-    println!("iPhone15,2: {:?}", identify::apple::lookup_model("iPhone15,2"));
 }
