@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, atomic::AtomicBool, atomic::Ordering};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
@@ -16,6 +17,43 @@ pub struct MdnsResult {
     pub instance_name: String,
     pub txt_records: HashMap<String, String>,
     pub port: Option<u16>,
+}
+
+/// Continuously listen for mDNS announcements and responses until `shutdown` is set.
+/// Unlike `mdns_discover`, this function does not time out; it runs indefinitely.
+pub async fn mdns_listen_continuous(tx: mpsc::Sender<MdnsResult>, shutdown: Arc<AtomicBool>) {
+    let socket = match UdpSocket::bind("0.0.0.0:5353").await {
+        Ok(s) => s,
+        Err(_) => match UdpSocket::bind("0.0.0.0:0").await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("mDNS continuous: failed to bind socket: {}", e);
+                return;
+            }
+        },
+    };
+
+    let _ = socket.join_multicast_v4(MDNS_ADDR, Ipv4Addr::UNSPECIFIED);
+
+    let mut buf = [0u8; 4096];
+
+    while !shutdown.load(Ordering::Relaxed) {
+        match tokio::time::timeout(Duration::from_millis(500), socket.recv_from(&mut buf)).await {
+            Ok(Ok((len, src))) => {
+                if let Some(results) = parse_mdns_response(&buf[..len], src) {
+                    for result in results {
+                        if tx.send(result).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => {} // timeout — loop and check shutdown
+        }
+    }
+
+    let _ = socket.leave_multicast_v4(MDNS_ADDR, Ipv4Addr::UNSPECIFIED);
 }
 
 /// Common service types to query

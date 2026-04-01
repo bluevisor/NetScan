@@ -85,6 +85,75 @@ async fn grab_single_banner(ip: IpAddr, port: u16) -> Option<BannerResult> {
     })
 }
 
+// ── SSH banner classification ────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct SshClassification {
+    pub os_hint: Option<String>,
+    pub device_hint: Option<String>,
+}
+
+/// Classify an SSH banner string into OS and device hints.
+pub fn classify_ssh_banner(banner: &str) -> Option<SshClassification> {
+    if !banner.starts_with("SSH-") {
+        return None;
+    }
+
+    let mut os_hint: Option<String> = None;
+    let mut device_hint: Option<String> = None;
+
+    let lower = banner.to_lowercase();
+
+    if lower.contains("dropbear") {
+        device_hint = Some("embedded device (router/IoT)".to_string());
+    } else if lower.contains("cisco") {
+        device_hint = Some("network equipment (Cisco)".to_string());
+    } else if lower.contains("rosssh") {
+        device_hint = Some("MikroTik router".to_string());
+    } else if lower.contains("lancom") {
+        device_hint = Some("LANCOM router".to_string());
+    } else if lower.contains("libssh") {
+        device_hint = Some("IoT/embedded (libssh)".to_string());
+    } else if lower.contains("openssh") {
+        // Try to extract version number to correlate with OS
+        if let Some(version_str) = extract_openssh_version(banner) {
+            os_hint = Some(correlate_openssh_version(&version_str));
+        }
+    }
+
+    if os_hint.is_none() && device_hint.is_none() {
+        return None;
+    }
+
+    Some(SshClassification { os_hint, device_hint })
+}
+
+fn extract_openssh_version(banner: &str) -> Option<String> {
+    // Banner format: SSH-2.0-OpenSSH_X.Y[pZ] [platform]
+    // Find "OpenSSH_" and take the version token
+    let idx = banner.to_lowercase().find("openssh_")?;
+    let rest = &banner[idx + 8..];
+    let end = rest.find(|c: char| c == ' ' || c == '\r' || c == '\n').unwrap_or(rest.len());
+    Some(rest[..end].to_string())
+}
+
+fn correlate_openssh_version(version: &str) -> String {
+    // Extract major.minor
+    let parts: Vec<&str> = version.split('p').next().unwrap_or(version).split('.').collect();
+    let major: u32 = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let minor: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    match (major, minor) {
+        (9, m) if m >= 6 => "recent Linux or macOS (OpenSSH 9.6+)".to_string(),
+        (9, _) => "Linux or macOS (OpenSSH 9.x)".to_string(),
+        (8, _) => "Linux or macOS (OpenSSH 8.x)".to_string(),
+        (7, _) => "Linux (OpenSSH 7.x) or older macOS".to_string(),
+        _ => format!("Linux/Unix (OpenSSH {})", version),
+    }
+}
+
+// ── Version extraction ───────────────────────────────────────────────────────
+
 /// Try to extract version info from a banner string
 fn extract_version(banner: &str) -> Option<String> {
     // Simple extraction without regex: look for version-like patterns

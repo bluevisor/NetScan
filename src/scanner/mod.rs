@@ -11,3 +11,4 @@ pub mod upnp;
 pub mod dns;
 pub mod snmp;
 pub mod wsd;
+pub mod smb;
