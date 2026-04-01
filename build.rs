@@ -4,18 +4,63 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::collections::HashMap;
 
-fn main() {
-    let out_dir = env::var("OUT_DIR").unwrap();
+/// Parse IEEE OUI CSV content into a map of decimal-key -> vendor name.
+/// CSV format: Registry,Assignment,Organization Name,Organization Address
+/// Assignment is a 6-char uppercase hex string like "CC03D9".
+fn parse_oui_csv(csv: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in csv.lines().skip(1) {
+        // Simple CSV split; organization names don't contain unescaped commas
+        // but they may be quoted. We only need fields 1 and 2.
+        let line = line.trim();
+        if line.is_empty() { continue; }
 
-    // --- OUI Table ---
-    let oui_path = Path::new(&out_dir).join("oui_table.rs");
-    let mut oui_file = BufWriter::new(File::create(&oui_path).unwrap());
+        // Split respecting basic CSV quoting for the first 3 fields
+        let fields: Vec<&str> = split_csv_line(line);
+        if fields.len() < 3 { continue; }
 
-    // Curated list of ~200 common vendors by OUI prefix (first 3 bytes as u32 key)
-    // Format: (byte0, byte1, byte2) => "Vendor Name"
-    let mut oui_map = phf_codegen::Map::new();
+        let assignment = fields[1].trim().trim_matches('"');
+        let org = fields[2].trim().trim_matches('"');
 
-    let vendors: Vec<([u8; 3], &str)> = vec![
+        if assignment.len() != 6 { continue; }
+
+        if let (Ok(b0), Ok(b1), Ok(b2)) = (
+            u8::from_str_radix(&assignment[0..2], 16),
+            u8::from_str_radix(&assignment[2..4], 16),
+            u8::from_str_radix(&assignment[4..6], 16),
+        ) {
+            let key = format!("{}_{}_{}", b0, b1, b2);
+            // Only insert first occurrence (avoid duplicates overwriting)
+            map.entry(key).or_insert_with(|| org.to_string());
+        }
+    }
+    map
+}
+
+fn split_csv_line(line: &str) -> Vec<&str> {
+    let mut fields = Vec::new();
+    let bytes = line.as_bytes();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => { in_quotes = !in_quotes; }
+            b',' if !in_quotes => {
+                fields.push(&line[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    fields.push(&line[start..]);
+    fields
+}
+
+/// Curated fallback list in case the IEEE download fails.
+fn curated_vendors() -> HashMap<String, String> {
+    let vendors: &[([u8; 3], &str)] = &[
         ([0x00, 0x17, 0x88], "Philips Lighting"),
         ([0x00, 0x1A, 0x11], "Google"),
         ([0x00, 0x50, 0x56], "VMware"),
@@ -71,7 +116,6 @@ fn main() {
         ([0xAC, 0xBC, 0x32], "Apple"),
         ([0xF0, 0xD1, 0xA9], "Apple"),
         ([0xF4, 0x5C, 0x89], "Apple"),
-        // Samsung
         ([0x00, 0x16, 0x6B], "Samsung"),
         ([0x00, 0x16, 0x6C], "Samsung"),
         ([0x00, 0x16, 0xDB], "Samsung"),
@@ -87,14 +131,12 @@ fn main() {
         ([0xCC, 0x07, 0xAB], "Samsung"),
         ([0xD0, 0x22, 0xBE], "Samsung"),
         ([0xF4, 0x42, 0x8F], "Samsung"),
-        // Google / Nest
         ([0x18, 0xD6, 0xC7], "Google"),
         ([0x54, 0x60, 0x09], "Google"),
         ([0xA4, 0x77, 0x33], "Google"),
         ([0xF4, 0xF5, 0xD8], "Google"),
         ([0x48, 0xD6, 0xD5], "Google Nest"),
         ([0x64, 0x16, 0x66], "Google Nest"),
-        // Cisco / Linksys
         ([0x00, 0x00, 0x0C], "Cisco"),
         ([0x00, 0x01, 0x42], "Cisco"),
         ([0x00, 0x01, 0x43], "Cisco"),
@@ -104,21 +146,19 @@ fn main() {
         ([0x00, 0x01, 0x97], "Cisco"),
         ([0x00, 0x0A, 0x8A], "Cisco"),
         ([0x00, 0x12, 0x17], "Cisco-Linksys"),
-        // TP-Link
+        ([0xCC, 0x03, 0xD9], "Cisco Meraki"),
         ([0x50, 0xC7, 0xBF], "TP-Link"),
         ([0x54, 0xC8, 0x0F], "TP-Link"),
         ([0x60, 0xE3, 0x27], "TP-Link"),
         ([0xAC, 0x84, 0xC6], "TP-Link"),
         ([0xB0, 0xA7, 0xB9], "TP-Link"),
         ([0xC0, 0x25, 0xE9], "TP-Link"),
-        // Netgear
         ([0x00, 0x09, 0x5B], "Netgear"),
         ([0x00, 0x0F, 0xB5], "Netgear"),
         ([0x00, 0x14, 0x6C], "Netgear"),
         ([0x00, 0x1B, 0x2F], "Netgear"),
         ([0x00, 0x1E, 0x2A], "Netgear"),
         ([0x20, 0x4E, 0x7F], "Netgear"),
-        // Ubiquiti
         ([0x00, 0x27, 0x22], "Ubiquiti"),
         ([0x04, 0x18, 0xD6], "Ubiquiti"),
         ([0x24, 0xA4, 0x3C], "Ubiquiti"),
@@ -131,7 +171,6 @@ fn main() {
         ([0xE0, 0x63, 0xDA], "Ubiquiti"),
         ([0xF0, 0x9F, 0xC2], "Ubiquiti"),
         ([0xFC, 0xEC, 0xDA], "Ubiquiti"),
-        // Intel
         ([0x00, 0x02, 0xB3], "Intel"),
         ([0x00, 0x03, 0x47], "Intel"),
         ([0x00, 0x13, 0x02], "Intel"),
@@ -142,20 +181,19 @@ fn main() {
         ([0x3C, 0x97, 0x0E], "Intel"),
         ([0x5C, 0x5F, 0x67], "Intel"),
         ([0x8C, 0x8D, 0x28], "Intel"),
-        // Raspberry Pi
         ([0xB8, 0x27, 0xEB], "Raspberry Pi"),
         ([0xDC, 0xA6, 0x32], "Raspberry Pi"),
         ([0xE4, 0x5F, 0x01], "Raspberry Pi"),
         ([0x2C, 0xCF, 0x67], "Raspberry Pi"),
-        // Sonos
         ([0x00, 0x0E, 0x58], "Sonos"),
         ([0x5C, 0xAA, 0xFD], "Sonos"),
         ([0x54, 0x2A, 0x1B], "Sonos"),
         ([0x78, 0x28, 0xCA], "Sonos"),
         ([0x94, 0x9F, 0x3E], "Sonos"),
-        // Synology
         ([0x00, 0x11, 0x32], "Synology"),
-        // Amazon
+        ([0x58, 0x38, 0x79], "Ricoh"),
+        ([0x00, 0x26, 0x73], "Ricoh"),
+        ([0x00, 0x1D, 0x7B], "Ricoh"),
         ([0x00, 0x04, 0x4B], "Amazon"),
         ([0x00, 0xFC, 0x8B], "Amazon"),
         ([0x0C, 0x47, 0xC9], "Amazon"),
@@ -171,7 +209,6 @@ fn main() {
         ([0x84, 0xD6, 0xD0], "Amazon"),
         ([0xA0, 0x02, 0xDC], "Amazon"),
         ([0xFC, 0x65, 0xDE], "Amazon"),
-        // Dell
         ([0x00, 0x06, 0x5B], "Dell"),
         ([0x00, 0x08, 0x74], "Dell"),
         ([0x00, 0x0B, 0xDB], "Dell"),
@@ -181,7 +218,6 @@ fn main() {
         ([0x00, 0x12, 0x3F], "Dell"),
         ([0x00, 0x13, 0x72], "Dell"),
         ([0x00, 0x14, 0x22], "Dell"),
-        // HP
         ([0x00, 0x01, 0xE6], "HP"),
         ([0x00, 0x02, 0xA5], "HP"),
         ([0x00, 0x04, 0xEA], "HP"),
@@ -194,16 +230,13 @@ fn main() {
         ([0x00, 0x10, 0x83], "HP"),
         ([0x00, 0x11, 0x0A], "HP"),
         ([0x00, 0x11, 0x85], "HP"),
-        // Roku
         ([0xB0, 0xA7, 0x37], "Roku"),
         ([0xBC, 0xD7, 0xD4], "Roku"),
         ([0xD4, 0xE2, 0x2F], "Roku"),
         ([0xDC, 0x3A, 0x5E], "Roku"),
-        // Ring
         ([0x00, 0x62, 0x6E], "Ring"),
         ([0x34, 0x3D, 0xC4], "Ring"),
         ([0x50, 0xDC, 0x4A], "Ring"),
-        // ASUS
         ([0x00, 0x0C, 0x6E], "ASUS"),
         ([0x00, 0x0E, 0xA6], "ASUS"),
         ([0x00, 0x11, 0x2F], "ASUS"),
@@ -214,7 +247,6 @@ fn main() {
         ([0x1C, 0xB7, 0x2C], "ASUS"),
         ([0x2C, 0x56, 0xDC], "ASUS"),
         ([0x60, 0x45, 0xCB], "ASUS"),
-        // Huawei / Honor
         ([0x00, 0x1E, 0x10], "Huawei"),
         ([0x00, 0x25, 0x9E], "Huawei"),
         ([0x00, 0x46, 0x4B], "Huawei"),
@@ -223,7 +255,6 @@ fn main() {
         ([0x10, 0x44, 0x7F], "Huawei"),
         ([0x20, 0xA6, 0xCD], "Huawei"),
         ([0x24, 0x09, 0x95], "Huawei"),
-        // LG
         ([0x00, 0x1C, 0x62], "LG"),
         ([0x00, 0x1E, 0x75], "LG"),
         ([0x00, 0x22, 0xA9], "LG"),
@@ -231,7 +262,6 @@ fn main() {
         ([0x20, 0x3D, 0xBD], "LG"),
         ([0x58, 0xA2, 0xB5], "LG"),
         ([0xA8, 0x16, 0xB2], "LG"),
-        // Xiaomi
         ([0x00, 0x9E, 0xC8], "Xiaomi"),
         ([0x04, 0xCF, 0x8C], "Xiaomi"),
         ([0x0C, 0x1D, 0xAF], "Xiaomi"),
@@ -246,10 +276,57 @@ fn main() {
         ([0x78, 0x02, 0xF8], "Xiaomi"),
         ([0x7C, 0x49, 0xEB], "Xiaomi"),
     ];
+    let mut map = HashMap::new();
+    for (oui, vendor) in vendors {
+        let key = format!("{}_{}_{}", oui[0], oui[1], oui[2]);
+        map.entry(key).or_insert_with(|| vendor.to_string());
+    }
+    map
+}
 
-    for (oui, vendor) in &vendors {
-        let key = format!("{}_{}_{}",oui[0], oui[1], oui[2]);
-        oui_map.entry(key, &format!("\"{}\"", vendor));
+fn main() {
+    let out_dir = env::var("OUT_DIR").unwrap();
+
+    // --- OUI Table ---
+    let oui_path = Path::new(&out_dir).join("oui_table.rs");
+    let mut oui_file = BufWriter::new(File::create(&oui_path).unwrap());
+
+    // Try to download the full IEEE OUI database; fall back to curated list.
+    let vendor_map: HashMap<String, String> = match ureq::get("https://standards-oui.ieee.org/oui/oui.csv")
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+    {
+        Ok(response) => {
+            match response.into_string() {
+                Ok(csv) => {
+                    let parsed = parse_oui_csv(&csv);
+                    if parsed.len() > 100 {
+                        eprintln!("cargo:warning=Downloaded IEEE OUI database ({} entries)", parsed.len());
+                        parsed
+                    } else {
+                        eprintln!("cargo:warning=IEEE OUI CSV parse yielded too few entries; using curated fallback");
+                        curated_vendors()
+                    }
+                }
+                Err(e) => {
+                    eprintln!("cargo:warning=Failed to read IEEE OUI response: {}; using curated fallback", e);
+                    curated_vendors()
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("cargo:warning=Failed to download IEEE OUI database: {}; using curated fallback", e);
+            curated_vendors()
+        }
+    };
+
+    let mut oui_map = phf_codegen::Map::new();
+    // Collect and sort keys for deterministic codegen
+    let mut entries: Vec<(String, String)> = vendor_map.into_iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, vendor) in &entries {
+        let escaped = vendor.replace('\\', "\\\\").replace('"', "\\\"");
+        oui_map.entry(key.as_str(), &format!("\"{}\"", escaped));
     }
 
     writeln!(&mut oui_file, "static OUI_TABLE: phf::Map<&'static str, &'static str> = {};", oui_map.build()).unwrap();
