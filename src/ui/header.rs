@@ -32,6 +32,7 @@ pub fn render_header(f: &mut Frame, area: Rect, state: &ScanState, tick: u64) {
     let device_count = state.devices.len();
     let priv_text = format!("[{}]", state.privilege);
     let iface_text = &state.interface.name;
+    let subnet_text = format!("{}", state.interface.network);
 
     let line = if is_complete {
         Line::from(vec![
@@ -41,6 +42,7 @@ pub fn render_header(f: &mut Frame, area: Rect, state: &ScanState, tick: u64) {
             Span::styled(format!("  {}  ", phase_text), theme::style_accent()),
             Span::styled(&priv_text, theme::style_dim()),
             Span::styled(format!("  {}  ", iface_text), theme::style_dim()),
+            Span::styled(format!("  {}  ", subnet_text), theme::style_accent()),
             Span::styled(format!("{} hosts", device_count), theme::style_accent()),
         ])
     } else {
@@ -51,6 +53,7 @@ pub fn render_header(f: &mut Frame, area: Rect, state: &ScanState, tick: u64) {
             Span::styled(format!("  {}  ", phase_text), theme::style_accent()),
             Span::styled(&priv_text, theme::style_dim()),
             Span::styled(format!("  {}  ", iface_text), theme::style_dim()),
+            Span::styled(format!("  {}  ", subnet_text), theme::style_accent()),
             Span::styled(format!("{} hosts", device_count), theme::style_accent()),
         ])
     };

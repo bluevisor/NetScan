@@ -6,7 +6,7 @@ use ratatui::Frame;
 use crate::model::Device;
 use super::theme;
 
-pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused: bool) {
+pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused: bool, scroll: u16) {
     let border_style = if focused { theme::style_border_focused() } else { theme::style_border() };
     let block = Block::default()
         .title(Span::styled(" Detail ", theme::style_header()))
@@ -145,6 +145,7 @@ pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused
 
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .scroll((scroll, 0));
     f.render_widget(paragraph, area);
 }

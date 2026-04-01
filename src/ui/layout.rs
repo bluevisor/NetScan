@@ -11,6 +11,8 @@ pub struct UiState {
     pub menu_open: bool,
     pub menu_selected: usize,
     pub tick: u64,
+    pub detail_scroll: u16,
+    pub sniffer_scroll: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,6 +31,8 @@ impl UiState {
             menu_open: false,
             menu_selected: 0,
             tick: 0,
+            detail_scroll: 0,
+            sniffer_scroll: 0,
         }
     }
 
@@ -44,6 +48,30 @@ impl UiState {
             }
             FocusPanel::Sniffer => FocusPanel::Devices,
         };
+    }
+
+    pub fn scroll_up(&mut self) {
+        match self.focused_panel {
+            FocusPanel::Detail => {
+                self.detail_scroll = self.detail_scroll.saturating_sub(1);
+            }
+            FocusPanel::Sniffer => {
+                self.sniffer_scroll = self.sniffer_scroll.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        match self.focused_panel {
+            FocusPanel::Detail => {
+                self.detail_scroll = self.detail_scroll.saturating_add(1);
+            }
+            FocusPanel::Sniffer => {
+                self.sniffer_scroll = self.sniffer_scroll.saturating_sub(1);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -100,6 +128,7 @@ pub fn render(f: &mut Frame, scan_state: &ScanState, ui: &UiState) {
         body_chunks[1],
         selected_device,
         ui.focused_panel == FocusPanel::Detail,
+        ui.detail_scroll,
     );
 
     // Sniffer panel
@@ -110,6 +139,7 @@ pub fn render(f: &mut Frame, scan_state: &ScanState, ui: &UiState) {
             &scan_state.sniffer_events,
             ui.focused_panel == FocusPanel::Sniffer,
             true,
+            ui.sniffer_scroll,
         );
     }
 

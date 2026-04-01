@@ -12,6 +12,7 @@ pub fn render_sniffer(
     events: &[SnifferEvent],
     focused: bool,
     visible: bool,
+    scroll_back: u16,
 ) {
     if !visible {
         return;
@@ -25,14 +26,15 @@ pub fn render_sniffer(
 
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    // Show last N events that fit
-    let start = if events.len() > inner_height {
-        events.len() - inner_height
+    // scroll_back=0 means latest, higher means further back in history
+    let end = if events.len() > scroll_back as usize {
+        events.len() - scroll_back as usize
     } else {
-        0
+        events.len()
     };
+    let start = if end > inner_height { end - inner_height } else { 0 };
 
-    let lines: Vec<Line> = events[start..].iter().map(|event| {
+    let lines: Vec<Line> = events[start..end].iter().map(|event| {
         let elapsed = event.timestamp.elapsed();
         let time_str = format!(
             "{:02}:{:02}:{:02}",

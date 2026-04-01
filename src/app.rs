@@ -132,17 +132,29 @@ impl App {
                                 }
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
-                                if ui_state.selected_device > 0 {
-                                    ui_state.selected_device -= 1;
+                                match ui_state.focused_panel {
+                                    FocusPanel::Devices => {
+                                        if ui_state.selected_device > 0 {
+                                            ui_state.selected_device -= 1;
+                                            ui_state.detail_scroll = 0;
+                                        }
+                                    }
+                                    _ => ui_state.scroll_up(),
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
-                                let count = {
-                                    let state = scan_state.lock().await;
-                                    state.devices.len()
-                                };
-                                if ui_state.selected_device + 1 < count {
-                                    ui_state.selected_device += 1;
+                                match ui_state.focused_panel {
+                                    FocusPanel::Devices => {
+                                        let count = {
+                                            let state = scan_state.lock().await;
+                                            state.devices.len()
+                                        };
+                                        if ui_state.selected_device + 1 < count {
+                                            ui_state.selected_device += 1;
+                                            ui_state.detail_scroll = 0;
+                                        }
+                                    }
+                                    _ => ui_state.scroll_down(),
                                 }
                             }
                             KeyCode::Char('p') => {
