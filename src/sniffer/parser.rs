@@ -1,11 +1,11 @@
 use std::net::{IpAddr, Ipv4Addr};
 
+use pnet::packet::arp::{ArpOperations, ArpPacket};
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
-use pnet::packet::arp::{ArpOperations, ArpPacket};
 use pnet::packet::Packet;
 use pnet::util::MacAddr;
 
@@ -104,7 +104,9 @@ pub fn parse_ethernet_frame(data: &[u8]) -> (Vec<SnifferEvent>, Option<LldpCdpIn
 
                             // DNS
                             if sport == 53 || dport == 53 {
-                                if let Some(evt) = parse_dns_packet(udp.payload(), src, dst, sport == 53) {
+                                if let Some(evt) =
+                                    parse_dns_packet(udp.payload(), src, dst, sport == 53)
+                                {
                                     events.push(evt);
                                 }
                             }
@@ -187,16 +189,20 @@ fn parse_lldp(payload: &[u8], src_mac: MacAddr) -> (Option<SnifferEvent>, Option
 
         let value = &payload[offset..offset + tlv_len];
         match tlv_type {
-            4 => { // Port Description
+            4 => {
+                // Port Description
                 port_description = std::str::from_utf8(value).ok().map(String::from);
             }
-            5 => { // System Name
+            5 => {
+                // System Name
                 system_name = std::str::from_utf8(value).ok().map(String::from);
             }
-            6 => { // System Description
+            6 => {
+                // System Description
                 system_description = std::str::from_utf8(value).ok().map(String::from);
             }
-            8 => { // Management Address
+            8 => {
+                // Management Address
                 // subtype(1) + addr_len(1) + addr_subtype(1) + addr
                 if value.len() >= 3 {
                     let addr_len = value[0] as usize;
@@ -221,7 +227,10 @@ fn parse_lldp(payload: &[u8], src_mac: MacAddr) -> (Option<SnifferEvent>, Option
         system_name.as_deref().unwrap_or("?"),
         system_description.as_deref().unwrap_or("?"),
         port_description.as_deref().unwrap_or("?"),
-        management_ip.map(|ip| ip.to_string()).as_deref().unwrap_or("?"),
+        management_ip
+            .map(|ip| ip.to_string())
+            .as_deref()
+            .unwrap_or("?"),
     );
 
     let event = SnifferEvent::new("LLDP", summary);
@@ -265,13 +274,16 @@ fn parse_cdp(payload: &[u8], src_mac: MacAddr) -> (Option<SnifferEvent>, Option<
 
         let value = &payload[offset..offset + value_len];
         match tlv_type {
-            0x0001 => { // Device ID
+            0x0001 => {
+                // Device ID
                 device_id = std::str::from_utf8(value).ok().map(String::from);
             }
-            0x0005 => { // Software Version
+            0x0005 => {
+                // Software Version
                 software_version = std::str::from_utf8(value).ok().map(String::from);
             }
-            0x0006 => { // Platform
+            0x0006 => {
+                // Platform
                 platform = std::str::from_utf8(value).ok().map(String::from);
             }
             _ => {}
@@ -311,10 +323,7 @@ fn parse_http(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> Option<SnifferEve
         let lower = line.to_lowercase();
         if lower.starts_with("host:") {
             let host = line[5..].trim();
-            let mut event = SnifferEvent::new(
-                "HTTP",
-                format!("Host: {} ← {}", host, src),
-            );
+            let mut event = SnifferEvent::new("HTTP", format!("Host: {} ← {}", host, src));
             event.source_ip = Some(IpAddr::V4(src));
             event.dest_ip = Some(IpAddr::V4(dst));
             return Some(event);
@@ -327,10 +336,7 @@ fn parse_http(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> Option<SnifferEve
         if lower.starts_with("user-agent:") {
             let ua = line[11..].trim();
             let short_ua: String = ua.chars().take(80).collect();
-            let mut event = SnifferEvent::new(
-                "HTTP",
-                format!("UA: {} ← {}", short_ua, src),
-            );
+            let mut event = SnifferEvent::new("HTTP", format!("UA: {} ← {}", short_ua, src));
             event.source_ip = Some(IpAddr::V4(src));
             event.dest_ip = Some(IpAddr::V4(dst));
             return Some(event);
@@ -393,10 +399,7 @@ fn parse_tls_sni(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> Option<Sniffer
             let name_start = offset + 5;
             if name_start + name_len <= payload.len() {
                 if let Ok(sni) = std::str::from_utf8(&payload[name_start..name_start + name_len]) {
-                    let mut event = SnifferEvent::new(
-                        "TLS",
-                        format!("SNI: {} ← {}", sni, src),
-                    );
+                    let mut event = SnifferEvent::new("TLS", format!("SNI: {} ← {}", sni, src));
                     event.source_ip = Some(IpAddr::V4(src));
                     event.dest_ip = Some(IpAddr::V4(dst));
                     return Some(event);
@@ -410,7 +413,12 @@ fn parse_tls_sni(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> Option<Sniffer
     None
 }
 
-fn parse_dns_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr, is_response: bool) -> Option<SnifferEvent> {
+fn parse_dns_packet(
+    payload: &[u8],
+    src: Ipv4Addr,
+    dst: Ipv4Addr,
+    is_response: bool,
+) -> Option<SnifferEvent> {
     if payload.len() < 12 {
         return None;
     }
@@ -449,7 +457,12 @@ fn parse_dns_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr, is_response: b
     let direction = if is_response { "response" } else { "query" };
     let mut event = SnifferEvent::new(
         "DNS",
-        format!("{} {} ← {}", direction, qname, if is_response { dst } else { src }),
+        format!(
+            "{} {} ← {}",
+            direction,
+            qname,
+            if is_response { dst } else { src }
+        ),
     );
     event.source_ip = Some(IpAddr::V4(src));
     event.dest_ip = Some(IpAddr::V4(dst));
@@ -498,10 +511,7 @@ fn parse_mdns_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> Option<Sni
         format!("query ({}q)", qdcount)
     };
 
-    let mut event = SnifferEvent::new(
-        "mDNS",
-        format!("{} {} ← {}", kind, name, src),
-    );
+    let mut event = SnifferEvent::new("mDNS", format!("{} {} ← {}", kind, name, src));
     event.source_ip = Some(IpAddr::V4(src));
     event.dest_ip = Some(IpAddr::V4(dst));
     Some(event)
@@ -526,10 +536,7 @@ pub fn match_dhcp_fingerprint(option55: &[u8], vendor_class: Option<&str>) -> Op
     }
 
     // Known option-55 fingerprints (compare as slices)
-    let ios_fp: &[&[u8]] = &[
-        &[1, 3, 6, 15, 119, 252],
-        &[1, 3, 6, 15, 119, 252, 95],
-    ];
+    let ios_fp: &[&[u8]] = &[&[1, 3, 6, 15, 119, 252], &[1, 3, 6, 15, 119, 252, 95]];
     let macos_fp: &[u8] = &[1, 121, 3, 6, 15, 114, 119, 252];
     let windows_fp: &[u8] = &[1, 15, 3, 6, 44, 46, 47, 31, 33, 121, 249, 252, 43];
     let android_fp: &[u8] = &[1, 3, 6, 15, 26, 28, 51, 58, 59];
@@ -552,7 +559,11 @@ pub fn match_dhcp_fingerprint(option55: &[u8], vendor_class: Option<&str>) -> Op
     None
 }
 
-pub fn parse_dhcp_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> (Option<SnifferEvent>, Option<DhcpFingerprint>) {
+pub fn parse_dhcp_packet(
+    payload: &[u8],
+    src: Ipv4Addr,
+    dst: Ipv4Addr,
+) -> (Option<SnifferEvent>, Option<DhcpFingerprint>) {
     // DHCP: minimum 240 bytes (236 base + 4 magic cookie)
     if payload.len() < 240 {
         return (None, None);
@@ -587,10 +598,14 @@ pub fn parse_dhcp_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> (Optio
         }
 
         match opt {
-            12 => { // Hostname
-                hostname = std::str::from_utf8(&payload[offset..offset + len]).ok().map(String::from);
+            12 => {
+                // Hostname
+                hostname = std::str::from_utf8(&payload[offset..offset + len])
+                    .ok()
+                    .map(String::from);
             }
-            53 if len == 1 => { // DHCP Message Type
+            53 if len == 1 => {
+                // DHCP Message Type
                 msg_type = match payload[offset] {
                     1 => "DISCOVER",
                     2 => "OFFER",
@@ -603,11 +618,15 @@ pub fn parse_dhcp_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> (Optio
                     _ => "unknown",
                 };
             }
-            55 => { // Parameter Request List
+            55 => {
+                // Parameter Request List
                 option55 = payload[offset..offset + len].to_vec();
             }
-            60 => { // Vendor Class Identifier
-                vendor_class = std::str::from_utf8(&payload[offset..offset + len]).ok().map(String::from);
+            60 => {
+                // Vendor Class Identifier
+                vendor_class = std::str::from_utf8(&payload[offset..offset + len])
+                    .ok()
+                    .map(String::from);
             }
             _ => {}
         }
@@ -622,7 +641,10 @@ pub fn parse_dhcp_packet(payload: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> (Optio
     let summary = if os_str.is_empty() {
         format!("{} host={} {}→{}", msg_type, host_str, src, dst)
     } else {
-        format!("{} host={} os={} {}→{}", msg_type, host_str, os_str, src, dst)
+        format!(
+            "{} host={} os={} {}→{}",
+            msg_type, host_str, os_str, src, dst
+        )
     };
 
     let mut event = SnifferEvent::new("DHCP", summary);

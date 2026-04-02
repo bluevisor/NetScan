@@ -16,20 +16,20 @@ pub struct TlsFpResult {
 /// Full JA3 would require intercepting the ClientHello from the sniffer
 pub async fn tls_probe(ip: IpAddr, port: u16) -> Option<TlsFpResult> {
     let addr = SocketAddr::new(ip, port);
-    let mut stream = tokio::time::timeout(
-        Duration::from_secs(3),
-        TcpStream::connect(&addr),
-    ).await.ok()?.ok()?;
+    let mut stream = tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr))
+        .await
+        .ok()?
+        .ok()?;
 
     // Send a minimal TLS ClientHello
     let client_hello = build_minimal_client_hello();
     stream.write_all(&client_hello).await.ok()?;
 
     let mut buf = [0u8; 4096];
-    let n = tokio::time::timeout(
-        Duration::from_secs(3),
-        stream.read(&mut buf),
-    ).await.ok()?.ok()?;
+    let n = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buf))
+        .await
+        .ok()?
+        .ok()?;
 
     if n < 7 {
         return None;
@@ -37,7 +37,8 @@ pub async fn tls_probe(ip: IpAddr, port: u16) -> Option<TlsFpResult> {
 
     // Parse TLS record header
     let content_type = buf[0];
-    if content_type != 0x16 { // Handshake
+    if content_type != 0x16 {
+        // Handshake
         return None;
     }
 
@@ -52,7 +53,8 @@ pub async fn tls_probe(ip: IpAddr, port: u16) -> Option<TlsFpResult> {
 
     // ServerHello starts at offset 5 (after record header)
     let handshake_type = buf[5];
-    if handshake_type != 0x02 { // ServerHello
+    if handshake_type != 0x02 {
+        // ServerHello
         return None;
     }
 
@@ -125,7 +127,7 @@ fn build_minimal_client_hello() -> Vec<u8> {
 
     // Extensions: SNI placeholder
     hello.extend_from_slice(&[0x00, 0x05]); // extensions length
-    // Supported versions extension (minimal)
+                                            // Supported versions extension (minimal)
     hello.extend_from_slice(&[0x00, 0x2B]); // extension type
     hello.extend_from_slice(&[0x00, 0x01]); // length
     hello.push(0x00); // empty for brevity

@@ -15,10 +15,10 @@ pub struct OsFpResult {
 /// This is a simplified approach — full OS fingerprinting (like nmap) requires raw sockets
 pub async fn fingerprint_os(ip: IpAddr, open_port: u16) -> Option<OsFpResult> {
     let addr = SocketAddr::new(ip, open_port);
-    let stream = tokio::time::timeout(
-        Duration::from_secs(3),
-        TcpStream::connect(&addr),
-    ).await.ok()?.ok()?;
+    let stream = tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr))
+        .await
+        .ok()?
+        .ok()?;
 
     // Get TTL from the socket (platform-specific)
     let ttl = get_ttl(&stream);

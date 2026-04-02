@@ -3,8 +3,8 @@ use std::sync::Arc;
 use pnet_datalink::{self, Channel};
 use tokio::sync::mpsc;
 
+use super::parser::{self, DhcpFingerprint, LldpCdpInfo};
 use crate::model::SnifferEvent;
-use super::parser::{self, LldpCdpInfo, DhcpFingerprint};
 
 /// Start passive packet capture on the given interface (simple variant — no extra channels).
 /// Runs in a blocking thread (pnet datalink is synchronous).

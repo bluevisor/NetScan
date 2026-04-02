@@ -14,11 +14,7 @@ pub struct BannerResult {
 }
 
 /// Grab banners from open ports on a host
-pub async fn grab_banners(
-    ip: IpAddr,
-    ports: &[u16],
-    tx: mpsc::Sender<BannerResult>,
-) {
+pub async fn grab_banners(ip: IpAddr, ports: &[u16], tx: mpsc::Sender<BannerResult>) {
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(10));
 
     let mut handles = Vec::new();
@@ -41,10 +37,10 @@ pub async fn grab_banners(
 
 async fn grab_single_banner(ip: IpAddr, port: u16) -> Option<BannerResult> {
     let addr = SocketAddr::new(ip, port);
-    let mut stream = tokio::time::timeout(
-        Duration::from_secs(3),
-        TcpStream::connect(&addr),
-    ).await.ok()?.ok()?;
+    let mut stream = tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr))
+        .await
+        .ok()?
+        .ok()?;
 
     // Some services send a banner immediately, others need a probe
     let probe = match port {
@@ -59,10 +55,7 @@ async fn grab_single_banner(ip: IpAddr, port: u16) -> Option<BannerResult> {
     }
 
     let mut buf = vec![0u8; 1024];
-    let banner = match tokio::time::timeout(
-        Duration::from_secs(3),
-        stream.read(&mut buf),
-    ).await {
+    let banner = match tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buf)).await {
         Ok(Ok(n)) if n > 0 => {
             // Clean up: take first line or first 256 bytes, strip non-printable
             let raw = String::from_utf8_lossy(&buf[..n]);
@@ -125,7 +118,10 @@ pub fn classify_ssh_banner(banner: &str) -> Option<SshClassification> {
         return None;
     }
 
-    Some(SshClassification { os_hint, device_hint })
+    Some(SshClassification {
+        os_hint,
+        device_hint,
+    })
 }
 
 fn extract_openssh_version(banner: &str) -> Option<String> {
@@ -133,13 +129,20 @@ fn extract_openssh_version(banner: &str) -> Option<String> {
     // Find "OpenSSH_" and take the version token
     let idx = banner.to_lowercase().find("openssh_")?;
     let rest = &banner[idx + 8..];
-    let end = rest.find(|c: char| c == ' ' || c == '\r' || c == '\n').unwrap_or(rest.len());
+    let end = rest
+        .find(|c: char| c == ' ' || c == '\r' || c == '\n')
+        .unwrap_or(rest.len());
     Some(rest[..end].to_string())
 }
 
 fn correlate_openssh_version(version: &str) -> String {
     // Extract major.minor
-    let parts: Vec<&str> = version.split('p').next().unwrap_or(version).split('.').collect();
+    let parts: Vec<&str> = version
+        .split('p')
+        .next()
+        .unwrap_or(version)
+        .split('.')
+        .collect();
     let major: u32 = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
     let minor: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::{Arc, atomic::AtomicBool, atomic::Ordering};
+use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
@@ -63,6 +63,7 @@ const SERVICE_QUERIES: &[&str] = &[
     "_https._tcp.local",
     "_airplay._tcp.local",
     "_raop._tcp.local",
+    "_device-info._tcp.local",
     "_companion-link._tcp.local",
     "_homekit._tcp.local",
     "_smb._tcp.local",
@@ -77,10 +78,35 @@ const SERVICE_QUERIES: &[&str] = &[
     "_sonos._tcp.local",
     "_hap._tcp.local",
     "_sleep-proxy._udp.local",
+    // Apple mobile/device identity services
+    "_apple-mobdev2._tcp.local",
+    "_apple-mobdev._tcp.local",
+    "_rdlink._tcp.local",
+    "_remotepairing._tcp.local",
 ];
+
+pub const APPLE_MOBILE_SERVICE_QUERIES: &[&str] = &[
+    "_device-info._tcp.local",
+    "_apple-mobdev2._tcp.local",
+    "_apple-mobdev._tcp.local",
+    "_rdlink._tcp.local",
+    "_remotepairing._tcp.local",
+    "_companion-link._tcp.local",
+];
+
+pub async fn probe_services(services: &[&str], listen_duration: Duration) -> Vec<MdnsResult> {
+    query_services(services, listen_duration).await
+}
 
 /// Run mDNS discovery by sending queries and listening for responses
 pub async fn mdns_discover(tx: mpsc::Sender<MdnsResult>) {
+    let results = query_services(SERVICE_QUERIES, Duration::from_secs(5)).await;
+    for result in results {
+        let _ = tx.send(result).await;
+    }
+}
+
+async fn query_services(services: &[&str], listen_duration: Duration) -> Vec<MdnsResult> {
     let socket = match UdpSocket::bind("0.0.0.0:5353").await {
         Ok(s) => s,
         Err(e) => {
@@ -89,7 +115,7 @@ pub async fn mdns_discover(tx: mpsc::Sender<MdnsResult>) {
                 Ok(s) => s,
                 Err(_) => {
                     eprintln!("mDNS: failed to bind socket: {}", e);
-                    return;
+                    return Vec::new();
                 }
             }
         }
@@ -101,7 +127,7 @@ pub async fn mdns_discover(tx: mpsc::Sender<MdnsResult>) {
     let mdns_dest = SocketAddr::new(IpAddr::V4(MDNS_ADDR), MDNS_PORT);
 
     // Send queries for each service type
-    for service in SERVICE_QUERIES {
+    for service in services {
         let query = build_mdns_query(service);
         let _ = socket.send_to(&query, mdns_dest).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -109,15 +135,14 @@ pub async fn mdns_discover(tx: mpsc::Sender<MdnsResult>) {
 
     // Listen for responses
     let mut buf = [0u8; 4096];
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + listen_duration;
+    let mut results = Vec::new();
 
     loop {
         match tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await {
             Ok(Ok((len, src))) => {
-                if let Some(results) = parse_mdns_response(&buf[..len], src) {
-                    for result in results {
-                        let _ = tx.send(result).await;
-                    }
+                if let Some(parsed) = parse_mdns_response(&buf[..len], src) {
+                    results.extend(parsed);
                 }
             }
             _ => break,
@@ -125,6 +150,7 @@ pub async fn mdns_discover(tx: mpsc::Sender<MdnsResult>) {
     }
 
     let _ = socket.leave_multicast_v4(MDNS_ADDR, Ipv4Addr::UNSPECIFIED);
+    results
 }
 
 /// Build a minimal mDNS query packet for a service type
@@ -200,7 +226,12 @@ fn parse_mdns_response(data: &[u8], src: SocketAddr) -> Option<Vec<MdnsResult>> 
 
         let rtype = u16::from_be_bytes([data[offset], data[offset + 1]]);
         let _rclass = u16::from_be_bytes([data[offset + 2], data[offset + 3]]);
-        let _ttl = u32::from_be_bytes([data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]]);
+        let _ttl = u32::from_be_bytes([
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
+        ]);
         let rdlength = u16::from_be_bytes([data[offset + 8], data[offset + 9]]) as usize;
         offset += 10;
 
@@ -211,22 +242,26 @@ fn parse_mdns_response(data: &[u8], src: SocketAddr) -> Option<Vec<MdnsResult>> 
         let rdata = &data[offset..offset + rdlength];
 
         match rtype {
-            1 => { // A record
+            1 => {
+                // A record
                 if rdlength == 4 {
                     let ip = IpAddr::V4(Ipv4Addr::new(rdata[0], rdata[1], rdata[2], rdata[3]));
                     a_records.insert(name.clone(), ip);
                 }
             }
-            12 => { // PTR record
+            12 => {
+                // PTR record
                 if let Some((pointed_name, _)) = read_dns_name(data, offset) {
                     ptr_records.push((name.clone(), pointed_name));
                 }
             }
-            16 => { // TXT record
+            16 => {
+                // TXT record
                 let txt = parse_txt_rdata(rdata);
                 txt_records_map.insert(name.clone(), txt);
             }
-            33 => { // SRV record
+            33 => {
+                // SRV record
                 if rdlength >= 6 {
                     let _priority = u16::from_be_bytes([rdata[0], rdata[1]]);
                     let _weight = u16::from_be_bytes([rdata[2], rdata[3]]);
@@ -244,12 +279,18 @@ fn parse_mdns_response(data: &[u8], src: SocketAddr) -> Option<Vec<MdnsResult>> 
 
     // Build results from PTR records (service instances)
     for (service_type, instance_name) in &ptr_records {
-        let txt = txt_records_map.get(instance_name).cloned().unwrap_or_default();
+        let txt = txt_records_map
+            .get(instance_name)
+            .cloned()
+            .unwrap_or_default();
         let port = srv_records.get(instance_name).map(|(_, p)| *p);
-        let hostname = srv_records.get(instance_name).map(|(t, _)| t.trim_end_matches('.').to_string());
+        let hostname = srv_records
+            .get(instance_name)
+            .map(|(t, _)| t.trim_end_matches('.').to_string());
 
         // Try to find IP from A records
-        let ip = hostname.as_ref()
+        let ip = hostname
+            .as_ref()
             .and_then(|h| a_records.get(h).copied())
             .or(Some(src.ip()));
 

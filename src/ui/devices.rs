@@ -4,9 +4,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
+use super::theme;
 use crate::model::{Device, DeviceScanState, PortState};
 use crate::scanner::orchestrator::ScanState;
-use super::theme;
 
 /// Column definitions with min widths and priority (higher = dropped first when tight)
 struct ColLayout {
@@ -28,7 +28,8 @@ fn compute_columns(width: usize, devices: &[&Device]) -> ColLayout {
     let dtype_w = 8;
 
     // Measure actual content widths
-    let max_vendor = devices.iter()
+    let max_vendor = devices
+        .iter()
         .filter_map(|d| d.vendor.as_ref())
         .map(|v| v.len())
         .max()
@@ -36,7 +37,8 @@ fn compute_columns(width: usize, devices: &[&Device]) -> ColLayout {
         .max(6) // min "VENDOR"
         .min(20);
 
-    let max_model = devices.iter()
+    let max_model = devices
+        .iter()
         .filter_map(|d| d.model.as_ref())
         .map(|m| m.len())
         .max()
@@ -44,7 +46,8 @@ fn compute_columns(width: usize, devices: &[&Device]) -> ColLayout {
         .max(5) // min "MODEL"
         .min(28);
 
-    let max_hostname = devices.iter()
+    let max_hostname = devices
+        .iter()
         .filter_map(|d| d.hostname.as_ref())
         .map(|h| h.len())
         .max()
@@ -66,8 +69,13 @@ fn compute_columns(width: usize, devices: &[&Device]) -> ColLayout {
         let leftover = remaining - full_need;
         // Give leftover to hostname
         return ColLayout {
-            ip: ip_w, mac: mac_w, vendor: max_vendor + 1, model: max_model + 1,
-            dtype: dtype_w, ports: ports_w, hostname: max_hostname + leftover,
+            ip: ip_w,
+            mac: mac_w,
+            vendor: max_vendor + 1,
+            model: max_model + 1,
+            dtype: dtype_w,
+            ports: ports_w,
+            hostname: max_hostname + leftover,
             show_mac: true,
         };
     }
@@ -81,8 +89,13 @@ fn compute_columns(width: usize, devices: &[&Device]) -> ColLayout {
         let budget = remaining - mac_w - 4;
         let (v, m, h) = distribute(budget, max_vendor, max_model, max_hostname);
         return ColLayout {
-            ip: ip_w, mac: mac_w, vendor: v, model: m,
-            dtype: dtype_w, ports: ports_w, hostname: h,
+            ip: ip_w,
+            mac: mac_w,
+            vendor: v,
+            model: m,
+            dtype: dtype_w,
+            ports: ports_w,
+            hostname: h,
             show_mac: true,
         };
     }
@@ -93,8 +106,13 @@ fn compute_columns(width: usize, devices: &[&Device]) -> ColLayout {
         let budget = remaining - 3;
         let (v, m, h) = distribute(budget, max_vendor, max_model, max_hostname);
         return ColLayout {
-            ip: ip_w, mac: 0, vendor: v, model: m,
-            dtype: dtype_w, ports: ports_w, hostname: h,
+            ip: ip_w,
+            mac: 0,
+            vendor: v,
+            model: m,
+            dtype: dtype_w,
+            ports: ports_w,
+            hostname: h,
             show_mac: false,
         };
     }
@@ -103,8 +121,13 @@ fn compute_columns(width: usize, devices: &[&Device]) -> ColLayout {
     let budget = remaining.saturating_sub(2);
     let half = budget / 2;
     ColLayout {
-        ip: ip_w, mac: 0, vendor: half.min(max_vendor + 1), model: (budget - half).min(max_model + 1),
-        dtype: dtype_w, ports: ports_w, hostname: 0,
+        ip: ip_w,
+        mac: 0,
+        vendor: half.min(max_vendor + 1),
+        model: (budget - half).min(max_model + 1),
+        dtype: dtype_w,
+        ports: ports_w,
+        hostname: 0,
         show_mac: false,
     }
 }
@@ -133,7 +156,11 @@ pub fn render_devices(
     tick: u64,
 ) {
     let devices = state.sorted_devices();
-    let border_style = if focused { theme::style_border_focused() } else { theme::style_border() };
+    let border_style = if focused {
+        theme::style_border_focused()
+    } else {
+        theme::style_border()
+    };
 
     let block = Block::default()
         .title(Span::styled(" Devices ", theme::style_header()))
@@ -155,12 +182,27 @@ pub fn render_devices(
         Span::styled(format!("{:<w$}", "IP", w = cols.ip), theme::style_dim()),
     ];
     if cols.show_mac {
-        header_spans.push(Span::styled(format!("{:<w$}", "MAC", w = cols.mac), theme::style_dim()));
+        header_spans.push(Span::styled(
+            format!("{:<w$}", "MAC", w = cols.mac),
+            theme::style_dim(),
+        ));
     }
-    header_spans.push(Span::styled(format!("{:<w$}", "VENDOR", w = cols.vendor), theme::style_dim()));
-    header_spans.push(Span::styled(format!("{:<w$}", "MODEL", w = cols.model), theme::style_dim()));
-    header_spans.push(Span::styled(format!("{:<w$}", "TYPE", w = cols.dtype), theme::style_dim()));
-    header_spans.push(Span::styled(format!("{:<w$}", "PRT", w = cols.ports), theme::style_dim()));
+    header_spans.push(Span::styled(
+        format!("{:<w$}", "VENDOR", w = cols.vendor),
+        theme::style_dim(),
+    ));
+    header_spans.push(Span::styled(
+        format!("{:<w$}", "MODEL", w = cols.model),
+        theme::style_dim(),
+    ));
+    header_spans.push(Span::styled(
+        format!("{:<w$}", "TYPE", w = cols.dtype),
+        theme::style_dim(),
+    ));
+    header_spans.push(Span::styled(
+        format!("{:<w$}", "PRT", w = cols.ports),
+        theme::style_dim(),
+    ));
     if cols.hostname > 0 {
         header_spans.push(Span::styled("HOSTNAME", theme::style_dim()));
     }
@@ -169,63 +211,101 @@ pub fn render_devices(
     f.render_widget(Paragraph::new(Line::from(header_spans)), header_area);
 
     // Build rows
-    let items: Vec<ListItem> = devices.iter().enumerate().map(|(i, dev)| {
-        let ip_str = match dev.ip {
-            std::net::IpAddr::V4(v4) => format!(".{:<3}", v4.octets()[3]),
-            _ => format!("{}", dev.ip),
-        };
+    let items: Vec<ListItem> = devices
+        .iter()
+        .enumerate()
+        .map(|(i, dev)| {
+            let ip_str = match dev.ip {
+                std::net::IpAddr::V4(v4) => format!(".{:<3}", v4.octets()[3]),
+                _ => format!("{}", dev.ip),
+            };
 
-        let mac_str = match &dev.mac {
-            Some(m) if crate::identify::oui::is_randomized_mac(m) => "random".to_string(),
-            Some(m) => format!("{}", m),
-            None => "??:??:??".to_string(),
-        };
+            let mac_str = match &dev.mac {
+                Some(m) if crate::identify::oui::is_randomized_mac(m) => "random".to_string(),
+                Some(m) => format!("{}", m),
+                None => "??:??:??".to_string(),
+            };
 
-        let vendor_str = dev.vendor.as_deref().unwrap_or("");
-        let vendor_trunc: String = vendor_str.chars().take(cols.vendor.saturating_sub(1)).collect();
+            let vendor_str = dev.vendor.as_deref().unwrap_or("");
+            let vendor_trunc: String = vendor_str
+                .chars()
+                .take(cols.vendor.saturating_sub(1))
+                .collect();
 
-        let model_str = dev.model.as_deref().unwrap_or("");
-        let model_trunc: String = model_str.chars().take(cols.model.saturating_sub(1)).collect();
+            let model_str = dev.model.as_deref().unwrap_or("");
+            let model_trunc: String = model_str
+                .chars()
+                .take(cols.model.saturating_sub(1))
+                .collect();
 
-        let type_str = format!("{}", dev.device_type);
+            let type_str = format!("{}", dev.device_type);
 
-        let port_count = dev.ports.iter().filter(|p| p.state == PortState::Open).count();
-        let ports_str = if port_count > 0 { format!("{}p", port_count) } else { String::new() };
+            let port_count = dev
+                .ports
+                .iter()
+                .filter(|p| p.state == PortState::Open)
+                .count();
+            let ports_str = if port_count > 0 {
+                format!("{}p", port_count)
+            } else {
+                String::new()
+            };
 
-        let spinner_idx = (tick / 3) as usize % theme::SPINNER_FRAMES.len();
-        let status = match dev.scan_state {
-            DeviceScanState::Discovered => "○",
-            DeviceScanState::Scanning => theme::SPINNER_FRAMES[(spinner_idx + i) % theme::SPINNER_FRAMES.len()],
-            DeviceScanState::Done => "●",
-        };
+            let spinner_idx = (tick / 3) as usize % theme::SPINNER_FRAMES.len();
+            let status = match dev.scan_state {
+                DeviceScanState::Discovered => "○",
+                DeviceScanState::Scanning => {
+                    theme::SPINNER_FRAMES[(spinner_idx + i) % theme::SPINNER_FRAMES.len()]
+                }
+                DeviceScanState::Done => "●",
+            };
 
-        let style = if i == selected {
-            theme::style_selected()
-        } else if dev.first_seen.elapsed().as_secs() < 2 {
-            theme::style_new_device()
-        } else {
-            theme::style_default()
-        };
+            let style = if i == selected {
+                theme::style_selected()
+            } else if dev.first_seen.elapsed().as_secs() < 2 {
+                theme::style_new_device()
+            } else {
+                theme::style_default()
+            };
 
-        let mut spans = vec![
-            Span::styled(format!(" {} ", status), Style::default().fg(theme::ACCENT)),
-            Span::styled(format!("{:<w$}", ip_str, w = cols.ip), style),
-        ];
-        if cols.show_mac {
-            spans.push(Span::styled(format!("{:<w$}", mac_str, w = cols.mac), Style::default().fg(theme::DIM)));
-        }
-        spans.push(Span::styled(format!("{:<w$}", vendor_trunc, w = cols.vendor), Style::default().fg(theme::YELLOW)));
-        spans.push(Span::styled(format!("{:<w$}", model_trunc, w = cols.model), Style::default().fg(theme::GREEN)));
-        spans.push(Span::styled(format!("{:<w$}", type_str, w = cols.dtype), Style::default().fg(theme::ACCENT2)));
-        spans.push(Span::styled(format!("{:<w$}", ports_str, w = cols.ports), Style::default().fg(theme::ACCENT)));
-        if cols.hostname > 0 {
-            let hostname_str = dev.hostname.as_deref().unwrap_or("");
-            let hostname_trunc: String = hostname_str.chars().take(cols.hostname).collect();
-            spans.push(Span::styled(hostname_trunc, Style::default().fg(theme::DIM)));
-        }
+            let mut spans = vec![
+                Span::styled(format!(" {} ", status), Style::default().fg(theme::ACCENT)),
+                Span::styled(format!("{:<w$}", ip_str, w = cols.ip), style),
+            ];
+            if cols.show_mac {
+                spans.push(Span::styled(
+                    format!("{:<w$}", mac_str, w = cols.mac),
+                    Style::default().fg(theme::DIM),
+                ));
+            }
+            spans.push(Span::styled(
+                format!("{:<w$}", vendor_trunc, w = cols.vendor),
+                Style::default().fg(theme::YELLOW),
+            ));
+            spans.push(Span::styled(
+                format!("{:<w$}", model_trunc, w = cols.model),
+                Style::default().fg(theme::GREEN),
+            ));
+            spans.push(Span::styled(
+                format!("{:<w$}", type_str, w = cols.dtype),
+                Style::default().fg(theme::ACCENT2),
+            ));
+            spans.push(Span::styled(
+                format!("{:<w$}", ports_str, w = cols.ports),
+                Style::default().fg(theme::ACCENT),
+            ));
+            if cols.hostname > 0 {
+                let hostname_str = dev.hostname.as_deref().unwrap_or("");
+                let hostname_trunc: String = hostname_str.chars().take(cols.hostname).collect();
+                spans.push(Span::styled(
+                    hostname_trunc,
+                    Style::default().fg(theme::DIM),
+                ));
+            }
 
-        ListItem::new(Line::from(spans))
-    }).collect();
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
 
     let list_area = Rect {
         y: inner.y + 1,

@@ -3,8 +3,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::scanner::orchestrator::ScanState;
 use super::theme;
+use crate::scanner::orchestrator::ScanState;
 
 pub fn render_header(f: &mut Frame, area: Rect, state: &ScanState, tick: u64) {
     let spinner_idx = (tick / 3) as usize % theme::SPINNER_FRAMES.len();
@@ -37,8 +37,14 @@ pub fn render_header(f: &mut Frame, area: Rect, state: &ScanState, tick: u64) {
     let line = if is_complete {
         Line::from(vec![
             Span::styled(" NETSCAN ", theme::style_header()),
-            Span::styled("  \u{2713} ", ratatui::style::Style::default().fg(theme::GREEN)),
-            Span::styled(&progress_bar, ratatui::style::Style::default().fg(theme::GREEN)),
+            Span::styled(
+                "  \u{2713} ",
+                ratatui::style::Style::default().fg(theme::GREEN),
+            ),
+            Span::styled(
+                &progress_bar,
+                ratatui::style::Style::default().fg(theme::GREEN),
+            ),
             Span::styled(format!("  {}  ", phase_text), theme::style_accent()),
             Span::styled(&priv_text, theme::style_dim()),
             Span::styled(format!("  {}  ", iface_text), theme::style_dim()),
@@ -48,8 +54,14 @@ pub fn render_header(f: &mut Frame, area: Rect, state: &ScanState, tick: u64) {
     } else {
         Line::from(vec![
             Span::styled(" NETSCAN ", theme::style_header()),
-            Span::styled(format!("  {} ", spinner), ratatui::style::Style::default().fg(theme::ACCENT)),
-            Span::styled(&progress_bar, ratatui::style::Style::default().fg(theme::ACCENT)),
+            Span::styled(
+                format!("  {} ", spinner),
+                ratatui::style::Style::default().fg(theme::ACCENT),
+            ),
+            Span::styled(
+                &progress_bar,
+                ratatui::style::Style::default().fg(theme::ACCENT),
+            ),
             Span::styled(format!("  {}  ", phase_text), theme::style_accent()),
             Span::styled(&priv_text, theme::style_dim()),
             Span::styled(format!("  {}  ", iface_text), theme::style_dim()),
@@ -58,8 +70,11 @@ pub fn render_header(f: &mut Frame, area: Rect, state: &ScanState, tick: u64) {
         ])
     };
 
-    let paragraph = Paragraph::new(line)
-        .block(Block::default().borders(Borders::BOTTOM).border_style(theme::style_border()));
+    let paragraph = Paragraph::new(line).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(theme::style_border()),
+    );
 
     f.render_widget(paragraph, area);
 }
