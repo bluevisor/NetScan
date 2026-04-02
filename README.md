@@ -70,7 +70,15 @@ sudo ./netscan --export results.json
 
 # Disable passive sniffer
 sudo ./netscan --no-sniff
+
+# Fill missing vendor/model/type fields with the `llm` CLI after the scan
+sudo ./netscan --llm-best-guess
+
+# Use a specific `llm` model alias
+sudo ./netscan --llm-best-guess --llm-model sonnet
 ```
+
+`--llm-best-guess` is optional and off by default. It runs one extra post-scan enrichment pass, only fills missing fields, and requires the local `llm` CLI to already be configured.
 
 ### Adaptive Privilege Model
 
@@ -93,12 +101,15 @@ NetScan detects whether it's running as root and adapts:
 | Key | Action |
 |-----|--------|
 | `j/k` or `Up/Down` | Navigate within focused panel |
+| `Enter` | Deep scan the selected device |
 | `Tab` | Cycle focus: Devices → Detail → Sniffer |
 | `s` | Toggle sniffer panel |
 | `p` | Pause/resume scanning |
 | `q` | Quit |
 | `Esc` | Open menu (Resume / Export JSON / Quit) |
 | `Ctrl+C` | Immediate quit |
+
+Deep scan also retries Apple mobile mDNS services such as `_device-info`, `_apple-mobdev2`, and `_remotepairing` so iPhone/iPad model clues can be recovered when the initial passive scan missed them.
 
 ## Export
 

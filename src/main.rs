@@ -28,6 +28,14 @@ struct Cli {
     /// Auto-export results to JSON file on exit
     #[arg(long, value_name = "FILE")]
     export: Option<PathBuf>,
+
+    /// Use the `llm` CLI to fill missing vendor/model/type guesses after the scan
+    #[arg(long)]
+    llm_best_guess: bool,
+
+    /// Model alias or name to pass to `llm -m`
+    #[arg(long, default_value = "flash")]
+    llm_model: String,
 }
 
 #[tokio::main]
@@ -58,6 +66,10 @@ async fn main() {
         cli.target,
         cli.export,
         cli.no_sniff,
+        identify::llm::LlmGuessConfig {
+            enabled: cli.llm_best_guess,
+            model: cli.llm_model,
+        },
     );
 
     if let Err(e) = app.run().await {
