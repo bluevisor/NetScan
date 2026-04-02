@@ -39,17 +39,21 @@ pub fn render_menu(f: &mut Frame, selected: usize) {
         .border_style(theme::style_border_focused())
         .style(Style::default().bg(ratatui::style::Color::Rgb(20, 20, 50)));
 
-    let items: Vec<ListItem> = MENU_ITEMS.iter().enumerate().map(|(i, (label, _))| {
-        let style = if i == selected {
-            Style::default()
-                .fg(ratatui::style::Color::White)
-                .bg(theme::SELECTED_BG)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            theme::style_default()
-        };
-        ListItem::new(Line::from(Span::styled(*label, style)))
-    }).collect();
+    let items: Vec<ListItem> = MENU_ITEMS
+        .iter()
+        .enumerate()
+        .map(|(i, (label, _))| {
+            let style = if i == selected {
+                Style::default()
+                    .fg(ratatui::style::Color::White)
+                    .bg(theme::SELECTED_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                theme::style_default()
+            };
+            ListItem::new(Line::from(Span::styled(*label, style)))
+        })
+        .collect();
 
     let list = List::new(items).block(block);
     f.render_widget(list, menu_area);

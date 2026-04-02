@@ -3,11 +3,21 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::model::Device;
 use super::theme;
+use crate::model::Device;
 
-pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused: bool, scroll: u16) {
-    let border_style = if focused { theme::style_border_focused() } else { theme::style_border() };
+pub fn render_detail(
+    f: &mut Frame,
+    area: Rect,
+    device: Option<&Device>,
+    focused: bool,
+    scroll: u16,
+) {
+    let border_style = if focused {
+        theme::style_border_focused()
+    } else {
+        theme::style_border()
+    };
     let block = Block::default()
         .title(Span::styled(" Detail ", theme::style_header()))
         .borders(Borders::ALL)
@@ -33,13 +43,22 @@ pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused
     ]));
 
     // MAC
-    let mac_str = device.mac.map(|m| m.to_string()).unwrap_or_else(|| "unknown".into());
-    let randomized = device.mac.map(|m| crate::identify::oui::is_randomized_mac(&m)).unwrap_or(false);
+    let mac_str = device
+        .mac
+        .map(|m| m.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    let randomized = device
+        .mac
+        .map(|m| crate::identify::oui::is_randomized_mac(&m))
+        .unwrap_or(false);
     lines.push(Line::from(vec![
         Span::styled(" MAC:      ", theme::style_dim()),
         Span::styled(&mac_str, theme::style_default()),
         if randomized {
-            Span::styled(" (random)", ratatui::style::Style::default().fg(theme::YELLOW))
+            Span::styled(
+                " (random)",
+                ratatui::style::Style::default().fg(theme::YELLOW),
+            )
         } else {
             Span::raw("")
         },
@@ -64,7 +83,10 @@ pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused
     // Type
     lines.push(Line::from(vec![
         Span::styled(" Type:     ", theme::style_dim()),
-        Span::styled(format!("{}", device.device_type), ratatui::style::Style::default().fg(theme::ACCENT2)),
+        Span::styled(
+            format!("{}", device.device_type),
+            ratatui::style::Style::default().fg(theme::ACCENT2),
+        ),
     ]));
 
     // Hostname
@@ -93,7 +115,10 @@ pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused
     };
     lines.push(Line::from(vec![
         Span::styled(" Conf:     ", theme::style_dim()),
-        Span::styled(format!("{:.0}%", device.confidence * 100.0), ratatui::style::Style::default().fg(conf_color)),
+        Span::styled(
+            format!("{:.0}%", device.confidence * 100.0),
+            ratatui::style::Style::default().fg(conf_color),
+        ),
     ]));
 
     // Sources
@@ -106,12 +131,17 @@ pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused
     lines.push(Line::from(""));
 
     // Open ports
-    let open_ports: Vec<&crate::model::PortInfo> = device.ports.iter()
+    let open_ports: Vec<&crate::model::PortInfo> = device
+        .ports
+        .iter()
         .filter(|p| p.state == crate::model::PortState::Open)
         .collect();
 
     if !open_ports.is_empty() {
-        lines.push(Line::from(Span::styled(" OPEN PORTS", theme::style_header())));
+        lines.push(Line::from(Span::styled(
+            " OPEN PORTS",
+            theme::style_header(),
+        )));
         for port in &open_ports {
             let svc = port.service.as_deref().unwrap_or("?");
             let banner = port.banner.as_deref().unwrap_or("");
@@ -119,7 +149,10 @@ pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused
 
             lines.push(Line::from(vec![
                 Span::styled(format!("  {:<6}", port.port), theme::style_accent()),
-                Span::styled(format!("{:<14}", svc), ratatui::style::Style::default().fg(theme::GREEN)),
+                Span::styled(
+                    format!("{:<14}", svc),
+                    ratatui::style::Style::default().fg(theme::GREEN),
+                ),
                 Span::styled(banner_short, theme::style_dim()),
             ]));
         }
@@ -130,9 +163,10 @@ pub fn render_detail(f: &mut Frame, area: Rect, device: Option<&Device>, focused
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(" SERVICES", theme::style_header())));
         for svc in &device.mdns_services {
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {}", svc.service_type), ratatui::style::Style::default().fg(theme::ACCENT)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {}", svc.service_type),
+                ratatui::style::Style::default().fg(theme::ACCENT),
+            )]));
             for (k, v) in &svc.txt_records {
                 let v_short: String = v.chars().take(25).collect();
                 lines.push(Line::from(vec![

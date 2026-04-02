@@ -1,8 +1,10 @@
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
+use super::{detail, devices, header, menu, sniffer, theme};
 use crate::scanner::orchestrator::ScanState;
-use super::{detail, devices, header, menu, sniffer};
 
 pub struct UiState {
     pub selected_device: usize,
@@ -13,6 +15,9 @@ pub struct UiState {
     pub tick: u64,
     pub detail_scroll: u16,
     pub sniffer_scroll: u16,
+    pub sniffer_filter: String,
+    pub sniffer_filter_active: bool,
+    pub sniffer_tracking: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,6 +38,9 @@ impl UiState {
             tick: 0,
             detail_scroll: 0,
             sniffer_scroll: 0,
+            sniffer_filter: String::new(),
+            sniffer_filter_active: false,
+            sniffer_tracking: false,
         }
     }
 
@@ -78,24 +86,33 @@ impl UiState {
 pub fn render(f: &mut Frame, scan_state: &ScanState, ui: &UiState) {
     let size = f.area();
 
+    // Outer layout: content + footer hotkey bar
+    let outer_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(size);
+
+    let content_area = outer_chunks[0];
+    let footer_area = outer_chunks[1];
+
     // Main layout: header + body + sniffer
     let main_chunks = if ui.sniffer_visible {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2),          // Header
-                Constraint::Percentage(65),     // Body
-                Constraint::Percentage(35),     // Sniffer
+                Constraint::Length(2),      // Header
+                Constraint::Percentage(65), // Body
+                Constraint::Percentage(35), // Sniffer
             ])
-            .split(size)
+            .split(content_area)
     } else {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2),           // Header
-                Constraint::Min(5),             // Body
+                Constraint::Length(2), // Header
+                Constraint::Min(5),    // Body
             ])
-            .split(size)
+            .split(content_area)
     };
 
     // Header
@@ -104,10 +121,7 @@ pub fn render(f: &mut Frame, scan_state: &ScanState, ui: &UiState) {
     // Body: devices (60%) + detail (40%)
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
-        ])
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(main_chunks[1]);
 
     // Device list
@@ -131,6 +145,13 @@ pub fn render(f: &mut Frame, scan_state: &ScanState, ui: &UiState) {
         ui.detail_scroll,
     );
 
+    // Derive the live IP filter from the currently selected device when tracking
+    let ip_filter = if ui.sniffer_tracking {
+        selected_device.map(|d| d.ip)
+    } else {
+        None
+    };
+
     // Sniffer panel
     if ui.sniffer_visible && main_chunks.len() > 2 {
         sniffer::render_sniffer(
@@ -140,11 +161,53 @@ pub fn render(f: &mut Frame, scan_state: &ScanState, ui: &UiState) {
             ui.focused_panel == FocusPanel::Sniffer,
             true,
             ui.sniffer_scroll,
+            &ui.sniffer_filter,
+            ui.sniffer_filter_active,
+            ip_filter,
         );
     }
+
+    // Hotkey bar
+    render_hotkeys(f, footer_area, ui.sniffer_visible, ui.sniffer_tracking);
 
     // Menu overlay
     if ui.menu_open {
         menu::render_menu(f, ui.menu_selected);
     }
+}
+
+fn render_hotkeys(f: &mut Frame, area: Rect, sniffer_visible: bool, tracking: bool) {
+    let sniffer_label = if sniffer_visible { "Hide Sniffer" } else { "Show Sniffer" };
+    let track_label = if tracking { "Untrack" } else { "Track IP" };
+    let keys: &[(&str, &str)] = &[
+        ("↑↓", "Navigate"),
+        ("Enter", "Deep Scan"),
+        ("Space", track_label),
+        ("Tab", "Focus"),
+        ("R", "Rescan"),
+        ("S", sniffer_label),
+        ("/", "Filter"),
+        ("Q", "Quit"),
+        ("Esc", "Menu"),
+    ];
+
+    let mut spans = Vec::new();
+    for (i, (key, label)) in keys.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", theme::style_footer_gap()));
+        }
+        spans.push(Span::styled(
+            format!(" {} ", key),
+            theme::style_footer_key(),
+        ));
+        spans.push(Span::styled(
+            format!(" {}", label),
+            theme::style_footer_label(),
+        ));
+    }
+
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(theme::style_footer_bar()),
+        area,
+    );
 }

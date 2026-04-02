@@ -12,6 +12,10 @@ pub const DIM: Color = Color::Rgb(100, 100, 130);
 pub const BORDER: Color = Color::Rgb(60, 60, 100);
 pub const HIGHLIGHT_BG: Color = Color::Rgb(40, 40, 80);
 pub const SELECTED_BG: Color = Color::Rgb(30, 60, 120);
+pub const FOOTER_BG: Color = Color::Rgb(18, 20, 42);
+pub const FOOTER_KEY_BG: Color = Color::Rgb(125, 135, 185);
+pub const FOOTER_KEY_FG: Color = Color::Rgb(12, 14, 28);
+pub const FOOTER_LABEL_FG: Color = Color::Rgb(205, 214, 240);
 
 pub fn style_default() -> Style {
     Style::default().fg(FG)
@@ -25,8 +29,30 @@ pub fn style_dim() -> Style {
     Style::default().fg(DIM)
 }
 
+pub fn style_footer_bar() -> Style {
+    Style::default().bg(FOOTER_BG).fg(FOOTER_LABEL_FG)
+}
+
+pub fn style_footer_label() -> Style {
+    Style::default().bg(FOOTER_BG).fg(FOOTER_LABEL_FG)
+}
+
+pub fn style_footer_gap() -> Style {
+    Style::default().bg(FOOTER_BG).fg(DIM)
+}
+
+pub fn style_footer_key() -> Style {
+    Style::default()
+        .bg(FOOTER_KEY_BG)
+        .fg(FOOTER_KEY_FG)
+        .add_modifier(Modifier::BOLD)
+}
+
 pub fn style_selected() -> Style {
-    Style::default().bg(SELECTED_BG).fg(Color::White).add_modifier(Modifier::BOLD)
+    Style::default()
+        .bg(SELECTED_BG)
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn style_header() -> Style {
