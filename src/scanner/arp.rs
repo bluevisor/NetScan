@@ -19,11 +19,7 @@ pub struct ArpResult {
 
 /// Perform ARP sweep on the subnet. Sends ARP requests and collects replies.
 /// This requires root privileges.
-pub async fn arp_scan(
-    iface: &InterfaceInfo,
-    targets: &[Ipv4Addr],
-    tx: mpsc::Sender<ArpResult>,
-) {
+pub async fn arp_scan(iface: &InterfaceInfo, targets: &[Ipv4Addr], tx: mpsc::Sender<ArpResult>) {
     let interface = pnet_datalink::interfaces()
         .into_iter()
         .find(|i| i.name == iface.name)
@@ -111,10 +107,7 @@ pub async fn arp_scan(
 }
 
 /// Fallback for non-root: TCP connect to common ports to discover hosts
-pub async fn ping_sweep(
-    targets: &[Ipv4Addr],
-    tx: mpsc::Sender<Ipv4Addr>,
-) {
+pub async fn ping_sweep(targets: &[Ipv4Addr], tx: mpsc::Sender<Ipv4Addr>) {
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(100));
 
     let mut handles = Vec::new();
@@ -132,7 +125,9 @@ pub async fn ping_sweep(
                 match tokio::time::timeout(
                     Duration::from_millis(500),
                     tokio::net::TcpStream::connect(addr),
-                ).await {
+                )
+                .await
+                {
                     Ok(Ok(_)) => {
                         let _ = tx.send(target).await;
                         return;

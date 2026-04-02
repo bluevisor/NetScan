@@ -1,6 +1,6 @@
-use std::net::{IpAddr, Ipv4Addr};
 use ipnetwork::Ipv4Network;
 use pnet_datalink::{self};
+use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {
@@ -49,7 +49,8 @@ pub fn pick_interface(name: Option<&str>) -> Option<InterfaceInfo> {
 }
 
 pub fn subnet_hosts(network: Ipv4Network) -> Vec<Ipv4Addr> {
-    network.iter().filter(|ip| {
-        *ip != network.network() && *ip != network.broadcast()
-    }).collect()
+    network
+        .iter()
+        .filter(|ip| *ip != network.network() && *ip != network.broadcast())
+        .collect()
 }

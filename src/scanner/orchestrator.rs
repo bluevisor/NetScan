@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, Mutex};
 
-use crate::identify::{apple, device_type, oui};
+use crate::identify::{apple, device_type, llm, oui};
 use crate::model::*;
 use crate::net::interface::InterfaceInfo;
 use crate::net::raw::PrivilegeLevel;
@@ -43,13 +43,9 @@ impl ScanState {
 
     pub fn sorted_devices(&self) -> Vec<&Device> {
         let mut devs: Vec<&Device> = self.devices.values().collect();
-        devs.sort_by(|a, b| {
-            match (a.ip, b.ip) {
-                (IpAddr::V4(a4), IpAddr::V4(b4)) => {
-                    a4.octets().cmp(&b4.octets())
-                }
-                _ => a.ip.cmp(&b.ip),
-            }
+        devs.sort_by(|a, b| match (a.ip, b.ip) {
+            (IpAddr::V4(a4), IpAddr::V4(b4)) => a4.octets().cmp(&b4.octets()),
+            _ => a.ip.cmp(&b.ip),
         });
         devs
     }
@@ -65,10 +61,101 @@ impl ScanState {
 
 pub type SharedState = Arc<Mutex<ScanState>>;
 
+fn merge_mdns_result(device: &mut Device, result: &mdns::MdnsResult) -> bool {
+    let mut changed = false;
+
+    if let Some(hostname) = &result.hostname {
+        if device.hostname.is_none() {
+            device.hostname = Some(hostname.clone());
+            changed = true;
+        }
+    }
+
+    if !result.service_type.is_empty() {
+        if let Some(existing) = device
+            .mdns_services
+            .iter_mut()
+            .find(|svc| svc.service_type == result.service_type && svc.name == result.instance_name)
+        {
+            let before = existing.txt_records.clone();
+            existing.txt_records.extend(result.txt_records.clone());
+            changed |= existing.txt_records != before;
+        } else {
+            device.mdns_services.push(MdnsService {
+                service_type: result.service_type.clone(),
+                name: result.instance_name.clone(),
+                txt_records: result.txt_records.clone(),
+            });
+            changed = true;
+        }
+    }
+
+    if changed {
+        device.add_source(DiscoveryMethod::Mdns);
+    }
+
+    changed
+}
+
+fn apply_apple_classification(device: &mut Device) {
+    let services: Vec<String> = device
+        .mdns_services
+        .iter()
+        .map(|service| service.service_type.clone())
+        .collect();
+    let mut all_txt: HashMap<String, String> = HashMap::new();
+    for service in &device.mdns_services {
+        all_txt.extend(service.txt_records.clone());
+    }
+
+    let model_id = all_txt.get("model").map(|s| s.as_str());
+    let apple_info =
+        apple::classify_apple_device(model_id, device.hostname.as_deref(), &services, &all_txt);
+    if apple_info.confidence > device.confidence {
+        device.vendor = Some(apple_info.brand);
+        device.confidence = apple_info.confidence;
+        if let Some(dt) = &apple_info.device_type {
+            device.device_type = match dt.as_str() {
+                "Phone" => DeviceType::Phone,
+                "Tablet" => DeviceType::Tablet,
+                "Computer" => DeviceType::Computer,
+                "TV" => DeviceType::TV,
+                "IoT" => DeviceType::IoT,
+                _ => device.device_type,
+            };
+        }
+        if let Some(name) = apple_info.marketing_name {
+            device.model = Some(name);
+        }
+    }
+}
+
+async fn probe_apple_mobile_services(state: SharedState, ip: IpAddr) {
+    let results =
+        mdns::probe_services(mdns::APPLE_MOBILE_SERVICE_QUERIES, Duration::from_secs(2)).await;
+    if results.is_empty() {
+        return;
+    }
+
+    let mut s = state.lock().await;
+    if let Some(device) = s.devices.get_mut(&ip) {
+        let mut changed = false;
+        for result in results {
+            if result.ip == Some(ip) {
+                changed |= merge_mdns_result(device, &result);
+            }
+        }
+        if changed {
+            apply_apple_classification(device);
+        }
+    }
+}
+
 /// Run the full scan orchestration
 pub async fn run_scan(
     state: SharedState,
     shutdown: Arc<AtomicBool>,
+    llm_config: llm::LlmGuessConfig,
 ) {
     let (iface, priv_level, targets) = {
         let s = state.lock().await;
@@ -120,7 +207,10 @@ pub async fn run_scan(
                 let ip = if let Some(mgmt_ip) = info.management_ip {
                     Some(mgmt_ip)
                 } else if let Some(mac) = info.source_mac {
-                    s.devices.iter().find(|(_, d)| d.mac == Some(mac)).map(|(ip, _)| *ip)
+                    s.devices
+                        .iter()
+                        .find(|(_, d)| d.mac == Some(mac))
+                        .map(|(ip, _)| *ip)
                 } else {
                     None
                 };
@@ -270,9 +360,16 @@ pub async fn run_scan(
     // Get discovered hosts
     let discovered_ips: Vec<Ipv4Addr> = {
         let s = state.lock().await;
-        s.devices.keys().filter_map(|ip| {
-            if let IpAddr::V4(v4) = ip { Some(*v4) } else { None }
-        }).collect()
+        s.devices
+            .keys()
+            .filter_map(|ip| {
+                if let IpAddr::V4(v4) = ip {
+                    Some(*v4)
+                } else {
+                    None
+                }
+            })
+            .collect()
     };
 
     // Port scan top 100 on all discovered hosts
@@ -311,52 +408,8 @@ pub async fn run_scan(
             let mut s = mdns_state.lock().await;
             if let Some(ip) = result.ip {
                 let dev = s.get_or_create_device(ip);
-                if let Some(ref hostname) = result.hostname {
-                    if dev.hostname.is_none() {
-                        dev.hostname = Some(hostname.clone());
-                    }
-                }
-                if !result.service_type.is_empty() {
-                    dev.mdns_services.push(MdnsService {
-                        service_type: result.service_type.clone(),
-                        name: result.instance_name.clone(),
-                        txt_records: result.txt_records.clone(),
-                    });
-                }
-                dev.add_source(DiscoveryMethod::Mdns);
-
-                // Apple device fingerprinting
-                let services: Vec<String> = dev.mdns_services.iter()
-                    .map(|s| s.service_type.clone())
-                    .collect();
-                let mut all_txt: HashMap<String, String> = HashMap::new();
-                for svc in &dev.mdns_services {
-                    all_txt.extend(svc.txt_records.clone());
-                }
-
-                let model_id = all_txt.get("model").map(|s| s.as_str());
-                let apple_info = apple::classify_apple_device(
-                    model_id,
-                    dev.hostname.as_deref(),
-                    &services,
-                    &all_txt,
-                );
-                if apple_info.confidence > dev.confidence {
-                    dev.vendor = Some(apple_info.brand);
-                    dev.confidence = apple_info.confidence;
-                    if let Some(dt) = &apple_info.device_type {
-                        dev.device_type = match dt.as_str() {
-                            "Phone" => DeviceType::Phone,
-                            "Tablet" => DeviceType::Tablet,
-                            "Computer" => DeviceType::Computer,
-                            "TV" => DeviceType::TV,
-                            "IoT" => DeviceType::IoT,
-                            _ => dev.device_type,
-                        };
-                    }
-                    if let Some(name) = apple_info.marketing_name {
-                        dev.model = Some(name);
-                    }
+                if merge_mdns_result(dev, &result) {
+                    apply_apple_classification(dev);
                 }
             }
         }
@@ -411,7 +464,10 @@ pub async fn run_scan(
     // DNS PTR lookup — use first IP in subnet as DNS server (likely the gateway)
     let (dns_tx, mut dns_rx) = mpsc::channel::<dns::DnsResult>(256);
     let dns_targets = discovered_ips.clone();
-    let dns_server = targets.first().copied().unwrap_or(Ipv4Addr::new(192, 168, 1, 1));
+    let dns_server = targets
+        .first()
+        .copied()
+        .unwrap_or(Ipv4Addr::new(192, 168, 1, 1));
     tokio::spawn(async move {
         dns::reverse_dns_lookup(&dns_targets, dns_server, dns_tx).await;
     });
@@ -553,13 +609,22 @@ pub async fn run_scan(
     // Get hosts with open ports for banner grabbing
     let hosts_with_ports: Vec<(IpAddr, Vec<u16>)> = {
         let s = state.lock().await;
-        s.devices.iter().filter_map(|(ip, dev)| {
-            let open: Vec<u16> = dev.ports.iter()
-                .filter(|p| p.state == PortState::Open)
-                .map(|p| p.port)
-                .collect();
-            if open.is_empty() { None } else { Some((*ip, open)) }
-        }).collect()
+        s.devices
+            .iter()
+            .filter_map(|(ip, dev)| {
+                let open: Vec<u16> = dev
+                    .ports
+                    .iter()
+                    .filter(|p| p.state == PortState::Open)
+                    .map(|p| p.port)
+                    .collect();
+                if open.is_empty() {
+                    None
+                } else {
+                    Some((*ip, open))
+                }
+            })
+            .collect()
     };
 
     // Banner grabbing
@@ -608,7 +673,8 @@ pub async fn run_scan(
     }
 
     // SMB enumeration on hosts with port 445 open
-    let smb_hosts: Vec<IpAddr> = hosts_with_ports.iter()
+    let smb_hosts: Vec<IpAddr> = hosts_with_ports
+        .iter()
         .filter(|(_, ports)| ports.contains(&445))
         .map(|(ip, _)| *ip)
         .collect();
@@ -689,6 +755,10 @@ pub async fn run_scan(
         }
     }
 
+    if llm_config.enabled && !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        apply_llm_best_guesses(state.clone(), &llm_config).await;
+    }
+
     // Mark complete
     {
         let mut s = state.lock().await;
@@ -696,5 +766,212 @@ pub async fn run_scan(
         for dev in s.devices.values_mut() {
             dev.scan_state = DeviceScanState::Done;
         }
+    }
+}
+
+async fn apply_llm_best_guesses(state: SharedState, llm_config: &llm::LlmGuessConfig) {
+    let candidates: Vec<Device> = {
+        let s = state.lock().await;
+        s.devices
+            .values()
+            .filter(|device| llm::needs_llm_guess(device))
+            .cloned()
+            .collect()
+    };
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    let mut stop_after_error = false;
+    for candidate in candidates {
+        match llm::guess_device(&candidate, llm_config).await {
+            Ok(Some(guess)) => {
+                let mut s = state.lock().await;
+                if let Some(device) = s.devices.get_mut(&candidate.ip) {
+                    llm::apply_guess(device, guess);
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("LLM best guess skipped for {}: {}", candidate.ip, err);
+                stop_after_error = true;
+            }
+        }
+
+        if stop_after_error {
+            break;
+        }
+    }
+}
+
+pub async fn deep_scan_device(state: SharedState, ip: IpAddr, llm_config: llm::LlmGuessConfig) {
+    let ipv4 = match ip {
+        IpAddr::V4(ipv4) => ipv4,
+        _ => {
+            let mut s = state.lock().await;
+            if let Some(device) = s.devices.get_mut(&ip) {
+                device.scan_state = DeviceScanState::Done;
+            }
+            return;
+        }
+    };
+
+    let (port_tx, mut port_rx) = mpsc::channel::<ports::PortScanResult>(512);
+    let top1000 = ports::top_1000_ports();
+    let port_task = tokio::spawn(async move {
+        ports::scan_ports(ipv4, &top1000, port_tx, 1500, 100).await;
+    });
+
+    while let Some(result) = port_rx.recv().await {
+        let mut s = state.lock().await;
+        if let Some(dev) = s.devices.get_mut(&result.ip) {
+            if !dev.ports.iter().any(|p| p.port == result.port_info.port) {
+                dev.ports.push(result.port_info);
+                dev.ports.sort_by_key(|p| p.port);
+            }
+            dev.add_source(DiscoveryMethod::TcpConnect);
+        }
+    }
+    let _ = port_task.await;
+
+    let open_ports = {
+        let s = state.lock().await;
+        s.devices
+            .get(&ip)
+            .map(|dev| {
+                dev.ports
+                    .iter()
+                    .filter(|p| p.state == PortState::Open)
+                    .map(|p| p.port)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+
+    let mut apple_probe_attempted = false;
+    let should_probe_apple = {
+        let s = state.lock().await;
+        s.devices
+            .get(&ip)
+            .map(apple::should_probe_mobile_services)
+            .unwrap_or(false)
+    };
+    if should_probe_apple {
+        probe_apple_mobile_services(state.clone(), ip).await;
+        apple_probe_attempted = true;
+    }
+
+    let (banner_tx, mut banner_rx) = mpsc::channel::<banner::BannerResult>(256);
+    let banner_task = if open_ports.is_empty() {
+        drop(banner_tx);
+        None
+    } else {
+        let banner_ports = open_ports.clone();
+        Some(tokio::spawn(async move {
+            banner::grab_banners(ip, &banner_ports, banner_tx).await;
+        }))
+    };
+
+    let os_task = open_ports
+        .first()
+        .copied()
+        .map(|port| tokio::spawn(async move { os_fp::fingerprint_os(ip, port).await }));
+
+    let smb_task = if open_ports.contains(&445) {
+        let (smb_tx, smb_rx) = mpsc::channel::<smb::SmbResult>(1);
+        let task = tokio::spawn(async move {
+            smb::smb_enumerate(ip, smb_tx).await;
+        });
+        Some((task, smb_rx))
+    } else {
+        None
+    };
+
+    while let Some(result) = banner_rx.recv().await {
+        let mut s = state.lock().await;
+        if let Some(dev) = s.devices.get_mut(&result.ip) {
+            if let Some(port_info) = dev.ports.iter_mut().find(|p| p.port == result.port) {
+                port_info.banner = Some(result.banner);
+                port_info.version = result.version;
+            }
+            dev.add_source(DiscoveryMethod::Banner);
+        }
+    }
+
+    if let Some(task) = banner_task {
+        let _ = task.await;
+    }
+
+    if let Some(task) = os_task {
+        if let Ok(Some(result)) = task.await {
+            let mut s = state.lock().await;
+            if let Some(dev) = s.devices.get_mut(&result.ip) {
+                if dev.os.is_none() {
+                    dev.os = result.os_guess;
+                }
+                dev.add_source(DiscoveryMethod::OsFp);
+            }
+        }
+    }
+
+    if let Some((task, mut smb_rx)) = smb_task {
+        while let Some(result) = smb_rx.recv().await {
+            let mut s = state.lock().await;
+            let dev = s.get_or_create_device(result.ip);
+            if let Some(ref os_ver) = result.os_version {
+                if dev.os.is_none() {
+                    dev.os = Some(os_ver.clone());
+                }
+            }
+            if let Some(ref name) = result.computer_name {
+                if dev.hostname.is_none() {
+                    dev.hostname = Some(name.clone());
+                }
+            }
+            dev.add_source(DiscoveryMethod::Smb);
+        }
+        let _ = task.await;
+    }
+
+    if !apple_probe_attempted {
+        let should_probe_apple = {
+            let s = state.lock().await;
+            s.devices
+                .get(&ip)
+                .map(apple::should_probe_mobile_services)
+                .unwrap_or(false)
+        };
+        if should_probe_apple {
+            probe_apple_mobile_services(state.clone(), ip).await;
+        }
+    }
+
+    {
+        let mut s = state.lock().await;
+        if let Some(dev) = s.devices.get_mut(&ip) {
+            device_type::apply_ssh_classification(dev);
+            device_type::classify_device(dev);
+        }
+    }
+
+    if llm_config.enabled {
+        let maybe_device = {
+            let s = state.lock().await;
+            s.devices.get(&ip).cloned()
+        };
+        if let Some(device) = maybe_device {
+            if let Ok(Some(guess)) = llm::guess_device(&device, &llm_config).await {
+                let mut s = state.lock().await;
+                if let Some(dev) = s.devices.get_mut(&ip) {
+                    llm::apply_guess(dev, guess);
+                }
+            }
+        }
+    }
+
+    let mut s = state.lock().await;
+    if let Some(device) = s.devices.get_mut(&ip) {
+        device.scan_state = DeviceScanState::Done;
     }
 }

@@ -17,15 +17,11 @@ pub struct SmbResult {
 /// to extract OS version, computer name, and domain.
 pub async fn smb_enumerate(ip: IpAddr, tx: mpsc::Sender<SmbResult>) {
     let addr = SocketAddr::new(ip, 445);
-    let mut stream = match tokio::time::timeout(
-        Duration::from_secs(3),
-        TcpStream::connect(&addr),
-    )
-    .await
-    {
-        Ok(Ok(s)) => s,
-        _ => return,
-    };
+    let mut stream =
+        match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await {
+            Ok(Ok(s)) => s,
+            _ => return,
+        };
 
     // Build SMB1 Negotiate request
     let packet = build_smb1_negotiate();

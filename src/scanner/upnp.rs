@@ -42,15 +42,11 @@ async fn fetch_upnp_device(ip: IpAddr, location_url: &str) -> Option<UpnpDeviceI
 
     let addr: SocketAddr = format!("{}:{}", host, port).parse().ok()?;
 
-    let mut stream = match tokio::time::timeout(
-        Duration::from_secs(3),
-        TcpStream::connect(addr),
-    )
-    .await
-    {
-        Ok(Ok(s)) => s,
-        _ => return None,
-    };
+    let mut stream =
+        match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr)).await {
+            Ok(Ok(s)) => s,
+            _ => return None,
+        };
 
     let request = format!(
         "GET {} HTTP/1.0\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
@@ -62,11 +58,8 @@ async fn fetch_upnp_device(ip: IpAddr, location_url: &str) -> Option<UpnpDeviceI
     }
 
     let mut response = String::new();
-    let _ = tokio::time::timeout(
-        Duration::from_secs(5),
-        stream.read_to_string(&mut response),
-    )
-    .await;
+    let _ =
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_string(&mut response)).await;
 
     // Find body after headers
     let body = if let Some(pos) = response.find("\r\n\r\n") {
