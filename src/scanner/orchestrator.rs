@@ -783,7 +783,6 @@ async fn apply_llm_best_guesses(state: SharedState, llm_config: &llm::LlmGuessCo
         return;
     }
 
-    let mut stop_after_error = false;
     for candidate in candidates {
         match llm::guess_device(&candidate, llm_config).await {
             Ok(Some(guess)) => {
@@ -795,12 +794,8 @@ async fn apply_llm_best_guesses(state: SharedState, llm_config: &llm::LlmGuessCo
             Ok(None) => {}
             Err(err) => {
                 eprintln!("LLM best guess skipped for {}: {}", candidate.ip, err);
-                stop_after_error = true;
+                break;
             }
-        }
-
-        if stop_after_error {
-            break;
         }
     }
 }

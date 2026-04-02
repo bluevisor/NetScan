@@ -127,7 +127,7 @@ fn build_minimal_client_hello() -> Vec<u8> {
 
     // Extensions: SNI placeholder
     hello.extend_from_slice(&[0x00, 0x05]); // extensions length
-                                            // Supported versions extension (minimal)
+    // Supported versions extension (minimal)
     hello.extend_from_slice(&[0x00, 0x2B]); // extension type
     hello.extend_from_slice(&[0x00, 0x01]); // length
     hello.push(0x00); // empty for brevity

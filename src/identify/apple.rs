@@ -113,22 +113,23 @@ pub fn classify_apple_device(
         return finalize_apple_guess(info);
     }
 
-    let has_ios_service = mdns_services
-        .iter()
-        .any(|s| s.contains("_apple-mobdev2._tcp") || s.contains("_apple-mobdev._tcp"));
-    let has_rdlink = mdns_services.iter().any(|s| s.contains("_rdlink._tcp"));
-    let has_remotepairing = mdns_services
-        .iter()
-        .any(|s| s.contains("_remotepairing._tcp"));
-    let has_companion_link = mdns_services
-        .iter()
-        .any(|s| s.contains("_companion-link._tcp"));
-    let has_computer_services = mdns_services.iter().any(|s| {
-        s.contains("_ssh._tcp")
-            || s.contains("_sftp-ssh._tcp")
-            || s.contains("_adisk._tcp")
-            || s.contains("_smb._tcp")
-    });
+    let (has_ios_service, has_rdlink, has_remotepairing, has_companion_link, has_computer_services) =
+        mdns_services.iter().fold(
+            (false, false, false, false, false),
+            |(ios, rdlink, remote, companion, computer), s| {
+                (
+                    ios || s.contains("_apple-mobdev2._tcp") || s.contains("_apple-mobdev._tcp"),
+                    rdlink || s.contains("_rdlink._tcp"),
+                    remote || s.contains("_remotepairing._tcp"),
+                    companion || s.contains("_companion-link._tcp"),
+                    computer
+                        || s.contains("_ssh._tcp")
+                        || s.contains("_sftp-ssh._tcp")
+                        || s.contains("_adisk._tcp")
+                        || s.contains("_smb._tcp"),
+                )
+            },
+        );
     let mobile_signal_count = usize::from(has_companion_link)
         + usize::from(has_rdlink)
         + usize::from(has_remotepairing)

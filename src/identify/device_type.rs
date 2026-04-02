@@ -41,27 +41,25 @@ pub fn classify_device(device: &mut Device) {
     }
 
     // Model/hostname string contains "router" or "gateway" — UPnP often provides this
-    {
-        let model_says_router = device
-            .model
-            .as_ref()
-            .map(|m| {
-                let ml = m.to_lowercase();
-                ml.contains("router") || ml.contains("gateway")
-            })
-            .unwrap_or(false);
-        let host_says_router = device
-            .hostname
-            .as_ref()
-            .map(|h| {
-                let hl = h.to_lowercase();
-                hl.contains("router") || hl.contains("gateway")
-            })
-            .unwrap_or(false);
-        if model_says_router || host_says_router {
-            device.device_type = DeviceType::Router;
-            device.confidence = device.confidence.max(0.75);
-        }
+    let model_says_router = device
+        .model
+        .as_ref()
+        .map(|m| {
+            let ml = m.to_lowercase();
+            ml.contains("router") || ml.contains("gateway")
+        })
+        .unwrap_or(false);
+    let host_says_router = device
+        .hostname
+        .as_ref()
+        .map(|h| {
+            let hl = h.to_lowercase();
+            hl.contains("router") || hl.contains("gateway")
+        })
+        .unwrap_or(false);
+    if model_says_router || host_says_router {
+        device.device_type = DeviceType::Router;
+        device.confidence = device.confidence.max(0.75);
     }
 
     // Already classified with high confidence (e.g., from Apple fingerprinting)

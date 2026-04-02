@@ -56,14 +56,14 @@ fn build_nbstat_query() -> Vec<u8> {
 
     // Encode wildcard name "*" (CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)
     pkt.push(0x20); // length 32
-                    // First-level encoding of "*\0\0..."  (16 bytes padded with spaces)
+    // First-level encoding of "*\0\0..."  (16 bytes padded with spaces)
     let name_bytes = b"*               "; // 16 chars
     for &b in &name_bytes[..16] {
         pkt.push(((b >> 4) & 0x0F) + b'A');
         pkt.push((b & 0x0F) + b'A');
     }
     pkt.push(0x00); // root
-                    // QTYPE = NBSTAT (0x0021)
+    // QTYPE = NBSTAT (0x0021)
     pkt.extend_from_slice(&[0x00, 0x21]);
     // QCLASS = IN
     pkt.extend_from_slice(&[0x00, 0x01]);

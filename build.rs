@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::collections::HashMap;
 
 /// Parse IEEE OUI CSV content into a map of decimal-key -> vendor name.
 /// CSV format: Registry,Assignment,Organization Name,Organization Address
@@ -13,16 +13,22 @@ fn parse_oui_csv(csv: &str) -> HashMap<String, String> {
         // Simple CSV split; organization names don't contain unescaped commas
         // but they may be quoted. We only need fields 1 and 2.
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
 
         // Split respecting basic CSV quoting for the first 3 fields
         let fields: Vec<&str> = split_csv_line(line);
-        if fields.len() < 3 { continue; }
+        if fields.len() < 3 {
+            continue;
+        }
 
         let assignment = fields[1].trim().trim_matches('"');
         let org = fields[2].trim().trim_matches('"');
 
-        if assignment.len() != 6 { continue; }
+        if assignment.len() != 6 {
+            continue;
+        }
 
         if let (Ok(b0), Ok(b1), Ok(b2)) = (
             u8::from_str_radix(&assignment[0..2], 16),
@@ -45,7 +51,9 @@ fn split_csv_line(line: &str) -> Vec<&str> {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'"' => { in_quotes = !in_quotes; }
+            b'"' => {
+                in_quotes = !in_quotes;
+            }
             b',' if !in_quotes => {
                 fields.push(&line[start..i]);
                 start = i + 1;
@@ -292,16 +300,21 @@ fn main() {
     let mut oui_file = BufWriter::new(File::create(&oui_path).unwrap());
 
     // Try to download the full IEEE OUI database; fall back to curated list.
-    let vendor_map: HashMap<String, String> = match ureq::get("https://standards-oui.ieee.org/oui/oui.csv")
-        .timeout(std::time::Duration::from_secs(30))
-        .call()
+    let vendor_map: HashMap<String, String> = match ureq::get(
+        "https://standards-oui.ieee.org/oui/oui.csv",
+    )
+    .timeout(std::time::Duration::from_secs(30))
+    .call()
     {
         Ok(response) => {
             match response.into_string() {
                 Ok(csv) => {
                     let parsed = parse_oui_csv(&csv);
                     if parsed.len() > 100 {
-                        eprintln!("cargo:warning=Downloaded IEEE OUI database ({} entries)", parsed.len());
+                        eprintln!(
+                            "cargo:warning=Downloaded IEEE OUI database ({} entries)",
+                            parsed.len()
+                        );
                         parsed
                     } else {
                         eprintln!("cargo:warning=IEEE OUI CSV parse yielded too few entries; using curated fallback");
@@ -315,7 +328,10 @@ fn main() {
             }
         }
         Err(e) => {
-            eprintln!("cargo:warning=Failed to download IEEE OUI database: {}; using curated fallback", e);
+            eprintln!(
+                "cargo:warning=Failed to download IEEE OUI database: {}; using curated fallback",
+                e
+            );
             curated_vendors()
         }
     };
@@ -329,7 +345,12 @@ fn main() {
         oui_map.entry(key.as_str(), &format!("\"{}\"", escaped));
     }
 
-    writeln!(&mut oui_file, "static OUI_TABLE: phf::Map<&'static str, &'static str> = {};", oui_map.build()).unwrap();
+    writeln!(
+        &mut oui_file,
+        "static OUI_TABLE: phf::Map<&'static str, &'static str> = {};",
+        oui_map.build()
+    )
+    .unwrap();
 
     // --- Apple Model Table ---
     let apple_path = Path::new(&out_dir).join("apple_models.rs");
@@ -344,5 +365,10 @@ fn main() {
         apple_map.entry(id.as_str(), &format!("\"{}\"", escaped));
     }
 
-    writeln!(&mut apple_file, "static APPLE_MODELS: phf::Map<&'static str, &'static str> = {};", apple_map.build()).unwrap();
+    writeln!(
+        &mut apple_file,
+        "static APPLE_MODELS: phf::Map<&'static str, &'static str> = {};",
+        apple_map.build()
+    )
+    .unwrap();
 }
